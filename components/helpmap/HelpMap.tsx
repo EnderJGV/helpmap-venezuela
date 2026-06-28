@@ -20,23 +20,47 @@ import {
 } from "./data";
 import { createClient } from "@/utils/supabase/client";
 import { enqueue, flushQueue, queueCount, type IntakeSubmission } from "./intakeQueue";
+import { compressImage } from "./uploadPhoto";
 import {
   copyText,
   nativeShare,
+  mapsDirectionsUrl,
   openShare,
   patientUrl,
+  shareStoryImage,
   shareText,
   telegramUrl,
   whatsappUrl,
 } from "./share";
 import { loadLeaflet } from "./leaflet-loader";
+import Tour from "./Tour";
 import "./helpmap.css";
 
-type View = null | "detail" | "share" | "report" | "admin";
+type View = null | "detail" | "share" | "report" | "admin" | "donate";
+
+// External donation partners surfaced in the "Donar" panel.
+const DONATIONS: { name: string; url: string; desc: { es: string; en: string } }[] = [
+  {
+    name: "World Central Kitchen",
+    url: "https://donate.wck.org/team/835442",
+    desc: { es: "Comidas calientes para familias afectadas.", en: "Hot meals for affected families." },
+  },
+  {
+    name: "Cáritas Venezuela",
+    url: "https://caritasvenezuela.org/donaciones/",
+    desc: { es: "Ayuda humanitaria, salud y refugios.", en: "Humanitarian aid, health and shelters." },
+  },
+  {
+    name: "Yummy Rides",
+    url: "https://dona.yummyrides.com",
+    desc: { es: "Logística y traslados en el terreno.", en: "On-the-ground logistics and transport." },
+  },
+];
 type AdminTab = "centros" | "personas";
 type EditType = null | "center" | "person";
 
 const CACHE_KEY = "helpmap:data:v2";
+const TOUR_KEY = "helpmap:tour:v1";
 
 interface Draft {
   // center
@@ -167,6 +191,7 @@ export default function HelpMap({ accent, mapLabels = true, showReport = true }:
 
   // Auth
   const [user, setUser] = useState<AuthUser | null>(null);
+  const [isAdmin, setIsAdmin] = useState(false); // true only if the user has an admin role row
   const [loginEmail, setLoginEmail] = useState("");
   const [loginPass, setLoginPass] = useState("");
   const [loginErr, setLoginErr] = useState("");
@@ -180,8 +205,13 @@ export default function HelpMap({ accent, mapLabels = true, showReport = true }:
   const [rMinor, setRMinor] = useState(false);
   const [rLoc, setRLoc] = useState("");
   const [rEstatus, setREstatus] = useState<Estatus>("INGRESADO");
+  const [rSexo, setRSexo] = useState<"M" | "F" | "">("");
+  const [rProcedencia, setRProcedencia] = useState("");
   const [rContact, setRContact] = useState("");
+  const [rPhoto, setRPhoto] = useState<string | null>(null); // compressed JPEG data URL (adults only)
+  const [rPhotoBusy, setRPhotoBusy] = useState(false);
   const [pending, setPending] = useState(() => (typeof window !== "undefined" ? queueCount() : 0));
+  const [tourOpen, setTourOpen] = useState(false);
 
   const t = T[lang];
 
@@ -232,14 +262,39 @@ export default function HelpMap({ accent, mapLabels = true, showReport = true }:
   // ---- Auth session ------------------------------------------------------
   useEffect(() => {
     const supabase = getSupabase();
+    // Resolve the admin role from the `admin_users` table. Real enforcement is
+    // RLS (is_admin()); this only decides whether to show the admin UI.
+    const resolveRole = async (uid: string | undefined) => {
+      if (!uid) {
+        setIsAdmin(false);
+        return;
+      }
+      const { data } = await supabase.from("admin_users").select("role").eq("user_id", uid).maybeSingle();
+      setIsAdmin(data?.role === "admin");
+    };
     supabase.auth.getSession().then(({ data }) => {
       setUser(data.session?.user ? { email: data.session.user.email ?? null } : null);
+      resolveRole(data.session?.user?.id);
     });
     const { data: sub } = supabase.auth.onAuthStateChange((_e, session) => {
       setUser(session?.user ? { email: session.user.email ?? null } : null);
+      resolveRole(session?.user?.id);
     });
     return () => sub.subscription.unsubscribe();
   }, []);
+
+  // ---- First-run app tour (shown once; reopenable from the header "?") -------
+  useEffect(() => {
+    if (typeof window !== "undefined" && !localStorage.getItem(TOUR_KEY)) setTourOpen(true);
+  }, []);
+  const closeTour = () => {
+    setTourOpen(false);
+    try {
+      localStorage.setItem(TOUR_KEY, "1");
+    } catch {
+      /* storage unavailable — non-fatal */
+    }
+  };
 
   // ---- Offline intake queue: flush on load and whenever connection returns --
   useEffect(() => {
@@ -466,8 +521,11 @@ export default function HelpMap({ accent, mapLabels = true, showReport = true }:
     if (target === "wa") openShare(whatsappUrl(url, text));
     else if (target === "tg") openShare(telegramUrl(url, text));
     else if (target === "ig") {
-      const ok = await copyText(url);
-      showToast(ok ? t.igCopied : t.copied);
+      showToast(t.storyBuilding);
+      const r = await shareStoryImage(selP.id, selP.nombres + " " + selP.apellidos);
+      if (r === "shared") showToast(t.storyShared);
+      else if (r === "downloaded") showToast(t.storyDownloaded);
+      else showToast(t.storyError);
     } else {
       const ok = await copyText(url);
       if (ok) showToast(t.copied);
@@ -517,7 +575,28 @@ export default function HelpMap({ accent, mapLabels = true, showReport = true }:
     setRMinor(false);
     setRLoc("");
     setREstatus("INGRESADO");
+    setRSexo("");
+    setRProcedencia("");
     setRContact("");
+    setRPhoto(null);
+    setRPhotoBusy(false);
+  };
+
+  // Compress the picked image in-browser. Refuses for minors (no photo ever,
+  // CLAUDE.md §2/§5) — defensive even though the field is hidden for minors.
+  const onPickPhoto = async (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    e.target.value = ""; // allow re-picking the same file
+    if (!file) return;
+    if (rMinor) return;
+    setRPhotoBusy(true);
+    try {
+      setRPhoto(await compressImage(file));
+    } catch {
+      showToast(t.photoError);
+    } finally {
+      setRPhotoBusy(false);
+    }
   };
 
   // Submit goes to the offline queue first, then we try to flush it to n8n.
@@ -538,13 +617,18 @@ export default function HelpMap({ accent, mapLabels = true, showReport = true }:
       ci: isMinor ? "MENOR" : rCi.trim() || "—",
       is_minor: isMinor,
       edad: edadNum,
-      sexo: null,
+      sexo: rSexo || null,
       location_id: rLoc,
       location_name: loc?.canonical_name ?? "",
       estatus: rEstatus,
+      procedencia: rProcedencia.trim() || null,
       contacto: rContact.trim() || null,
       lang,
       source: "web",
+      // Adults only — never attach a photo for a minor (CLAUDE.md §2/§5).
+      // foto_b64 is the local image; the upload turns it into foto_url (a URL).
+      foto_b64: isMinor ? null : rPhoto,
+      foto_url: null,
     };
     enqueue(sub);
     resetReport();
@@ -591,7 +675,9 @@ export default function HelpMap({ accent, mapLabels = true, showReport = true }:
     setEditId(null);
     setDraft({ canonical_name: "", type: "hospital", state: "distrito_capital", municipality: "", lat: "", lng: "" });
   };
-  const saveCenter = () => {
+  // Admin writes go to the BASE tables via the authenticated session (CLAUDE.md
+  // §9). RLS must grant the authenticated role write access (see runbook).
+  const saveCenter = async () => {
     const d = draft || {};
     const lat = parseFloat(d.lat || "");
     const lng = parseFloat(d.lng || "");
@@ -607,11 +693,34 @@ export default function HelpMap({ accent, mapLabels = true, showReport = true }:
       contact_whatsapp: editId ? locById[editId]?.contact_whatsapp ?? null : null,
       active: true,
     };
+    const { error } = await getSupabase().from("locations").upsert({
+      location_id: obj.location_id,
+      canonical_name: obj.canonical_name,
+      type: obj.type,
+      municipality: obj.municipality,
+      state: obj.state,
+      lat: obj.lat,
+      lng: obj.lng,
+      contact_phone: obj.contact_phone,
+      contact_whatsapp: obj.contact_whatsapp,
+      active: obj.active,
+    });
+    if (error) {
+      showToast(t.saveError);
+      return;
+    }
     setLocations((ls) => (editId ? ls.map((l) => (l.location_id === obj.location_id ? obj : l)) : [...ls, obj]));
     clearEdit();
     showToast(t.savedC);
   };
-  const deleteCenter = (id: string) => {
+  const deleteCenter = async (id: string) => {
+    // Hard delete. If people still reference this center the FK blocks it, so we
+    // surface that instead of silently wiping patient records.
+    const { error } = await getSupabase().from("locations").delete().eq("location_id", id);
+    if (error) {
+      showToast(t.delBlocked);
+      return;
+    }
     setLocations((ls) => ls.filter((l) => l.location_id !== id));
     setPatients((ps) => ps.filter((p) => p.location_id !== id));
     setLocationSel((cur) => (cur === id ? null : cur));
@@ -645,24 +754,61 @@ export default function HelpMap({ accent, mapLabels = true, showReport = true }:
       estatus: "INGRESADO",
     });
   };
-  const savePerson = () => {
+  const savePerson = async () => {
     const d = draft || {};
     const loc = locById[d.location_id || ""] || locations[0];
     if (!loc) {
-      showToast(t.deleted);
+      showToast(t.reqNameLoc);
       return;
     }
     const edad = d.edad ? parseInt(d.edad) : null;
     const isMinor = edad != null && edad < 18;
     const prev = editId ? patients.find((x) => x.id === editId) : undefined;
-    const obj: PatientPublic = {
-      id: editId || "p_" + Date.now(),
+    const ci = isMinor ? null : d.ci?.trim() || null;
+
+    // Base-table columns only. The minor-privacy DB trigger enforces the photo/CI
+    // rules; the public view derives ci_display, location_name, etc.
+    const baseRow = {
       apellidos: d.apellidos || "",
       nombres: d.nombres || "",
-      ci_display: isMinor ? "MENOR" : d.ci || "—",
+      ci,
       is_minor: isMinor,
       edad,
       sexo: (d.sexo as Sexo) || null,
+      location_id: loc.location_id,
+      estatus: (d.estatus as Estatus) || "INGRESADO",
+    };
+
+    const supabase = getSupabase();
+    let newId = editId;
+    if (editId) {
+      const { error } = await supabase.from("patients").update(baseRow).eq("id", editId);
+      if (error) {
+        showToast(t.saveError);
+        return;
+      }
+    } else {
+      const person_key = ci || "admin_" + (crypto.randomUUID?.() ?? String(Date.now()));
+      const { data, error } = await supabase
+        .from("patients")
+        .insert({ ...baseRow, person_key })
+        .select("id")
+        .single();
+      if (error || !data) {
+        showToast(t.saveError);
+        return;
+      }
+      newId = data.id as string;
+    }
+
+    const obj: PatientPublic = {
+      id: newId || "p_" + Date.now(),
+      apellidos: baseRow.apellidos,
+      nombres: baseRow.nombres,
+      ci_display: isMinor ? "MENOR" : ci || "—",
+      is_minor: isMinor,
+      edad,
+      sexo: baseRow.sexo,
       location_id: loc.location_id,
       location_name: loc.canonical_name,
       location_type: loc.type,
@@ -670,7 +816,7 @@ export default function HelpMap({ accent, mapLabels = true, showReport = true }:
       state: loc.state,
       lat: loc.lat,
       lng: loc.lng,
-      estatus: (d.estatus as Estatus) || "INGRESADO",
+      estatus: baseRow.estatus,
       foto_url: isMinor ? null : prev?.foto_url ?? null,
       verified: prev?.verified ?? false,
       updated_at: new Date().toISOString(),
@@ -679,7 +825,12 @@ export default function HelpMap({ accent, mapLabels = true, showReport = true }:
     clearEdit();
     showToast(t.savedP);
   };
-  const deletePerson = (id: string) => {
+  const deletePerson = async (id: string) => {
+    const { error } = await getSupabase().from("patients").delete().eq("id", id);
+    if (error) {
+      showToast(t.saveError);
+      return;
+    }
     setPatients((ps) => ps.filter((p) => p.id !== id));
     clearEdit();
     showToast(t.deleted);
@@ -717,7 +868,8 @@ export default function HelpMap({ accent, mapLabels = true, showReport = true }:
     { key: "all", label: t.all, dotCls: "" },
     { key: "INGRESADO", label: SM.INGRESADO[lang], dotCls: "cdot-adm" },
     { key: "ALTA", label: SM.ALTA[lang], dotCls: "cdot-ok" },
-    { key: "FALLECIDO", label: SM.FALLECIDO[lang], dotCls: "cdot-dec" },
+    // FALLECIDO filter hidden for now (records still appear under "Todos").
+    // { key: "FALLECIDO", label: SM.FALLECIDO[lang], dotCls: "cdot-dec" },
   ];
 
   const rootStyle = accent ? ({ ["--accent"]: accent } as React.CSSProperties) : undefined;
@@ -742,7 +894,7 @@ export default function HelpMap({ accent, mapLabels = true, showReport = true }:
           <div className="hright">
             {/* Admin entry is hidden from the public UI; it only appears once a
                 Supabase session exists (sign in via the local /signup page). */}
-            {user && (
+            {isAdmin && (
               <button
                 className="gear"
                 onClick={() => {
@@ -759,6 +911,19 @@ export default function HelpMap({ accent, mapLabels = true, showReport = true }:
                 </svg>
               </button>
             )}
+            <button className="donate-btn" onClick={() => setView("donate")} aria-label={lang === "es" ? "Donar" : "Donate"}>
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                <path d="M12 21s-7-4.5-9.5-9A5 5 0 0 1 12 6a5 5 0 0 1 9.5 6c-2.5 4.5-9.5 9-9.5 9Z" />
+              </svg>
+              {t.donate}
+            </button>
+            <button className="gear" onClick={() => setTourOpen(true)} aria-label={lang === "es" ? "Cómo funciona" : "How it works"}>
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                <circle cx="12" cy="12" r="9" />
+                <path d="M9.5 9.5a2.5 2.5 0 0 1 4.5 1.5c0 1.7-2.5 2-2.5 3.5" />
+                <path d="M12 17.5h.01" />
+              </svg>
+            </button>
             <div className="lang">
               <button className={"lg " + (lang === "es" ? "lg-on" : "")} onClick={() => setLang("es")}>
                 ES
@@ -842,6 +1007,21 @@ export default function HelpMap({ accent, mapLabels = true, showReport = true }:
         )}
       </div>
 
+      {!view && (
+        <div className="zoomctl">
+          <button className="zbtn" onClick={() => mapRef.current?.zoomIn()} aria-label={lang === "es" ? "Acercar" : "Zoom in"}>
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round">
+              <path d="M12 5v14M5 12h14" />
+            </svg>
+          </button>
+          <button className="zbtn" onClick={() => mapRef.current?.zoomOut()} aria-label={lang === "es" ? "Alejar" : "Zoom out"}>
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round">
+              <path d="M5 12h14" />
+            </svg>
+          </button>
+        </div>
+      )}
+
       {(showReport ?? true) && !view && (
         <button className="fab" onClick={() => setView("report")}>
           {ICON.plus}
@@ -914,27 +1094,34 @@ export default function HelpMap({ accent, mapLabels = true, showReport = true }:
               <div className="empty">
                 {selStateLoc.type === "donation_centre" ? t.donationInfo : t.noPatientsHere}
               </div>
-              {(selStateLoc.contact_whatsapp || selStateLoc.contact_phone) && (
-                <div className="dactions">
-                  {selStateLoc.contact_whatsapp && (
-                    <a
-                      className="btnp"
-                      href={`https://wa.me/${selStateLoc.contact_whatsapp.replace(/[^0-9]/g, "")}`}
-                      target="_blank"
-                      rel="noopener noreferrer"
-                    >
-                      {ICON.wa}
-                      {t.whatsapp}
-                    </a>
-                  )}
-                  {selStateLoc.contact_phone && (
-                    <a className="btng" href={`tel:${selStateLoc.contact_phone}`}>
-                      {ICON.phone}
-                      {t.call}
-                    </a>
-                  )}
-                </div>
-              )}
+              <div className="dactions">
+                <a
+                  className="btnp"
+                  href={mapsDirectionsUrl(selStateLoc.lat, selStateLoc.lng)}
+                  target="_blank"
+                  rel="noopener noreferrer"
+                >
+                  {ICON.pin}
+                  {t.directions}
+                </a>
+                {selStateLoc.contact_whatsapp && (
+                  <a
+                    className="btng"
+                    href={`https://wa.me/${selStateLoc.contact_whatsapp.replace(/[^0-9]/g, "")}`}
+                    target="_blank"
+                    rel="noopener noreferrer"
+                  >
+                    {ICON.wa}
+                    {t.whatsapp}
+                  </a>
+                )}
+                {selStateLoc.contact_phone && (
+                  <a className="btng" href={`tel:${selStateLoc.contact_phone}`}>
+                    {ICON.phone}
+                    {t.call}
+                  </a>
+                )}
+              </div>
             </div>
           )}
         </div>
@@ -969,6 +1156,7 @@ export default function HelpMap({ accent, mapLabels = true, showReport = true }:
             </div>
             <div className="drows">
               {[
+                { label: t.f_status, value: SM[selP.estatus][lang], mono: "" },
                 { label: t.ci, value: selP.ci_display, mono: "mono" },
                 { label: t.edad, value: selP.edad != null ? selP.edad + " " + t.yrs : "—", mono: "" },
                 { label: t.sexo, value: selP.sexo === "F" ? t.female : selP.sexo === "M" ? t.male : "—", mono: "" },
@@ -996,6 +1184,15 @@ export default function HelpMap({ accent, mapLabels = true, showReport = true }:
                 {ICON.pin}
                 {t.seeMap}
               </button>
+              <a
+                className="btng"
+                href={mapsDirectionsUrl(selP.lat, selP.lng)}
+                target="_blank"
+                rel="noopener noreferrer"
+              >
+                {ICON.pin}
+                {t.directions}
+              </a>
               {selLoc?.contact_whatsapp && (
                 <a
                   className="btng"
@@ -1047,10 +1244,10 @@ export default function HelpMap({ accent, mapLabels = true, showReport = true }:
                       <span className="dot"></span>
                       {SM[selP.estatus][lang] + " · " + selP.location_name}
                     </span>
-                    <span className="ogurl">{"helpmap.ve/p/" + slug(selP.nombres + " " + selP.apellidos)}</span>
+                    <span className="ogurl">{"helpmapve.net/p/" + slug(selP.nombres + " " + selP.apellidos)}</span>
                   </div>
                 </div>
-                <span className="blink">{"helpmap.ve/p/" + slug(selP.nombres + " " + selP.apellidos)}</span>
+                <span className="blink">{"helpmapve.net/p/" + slug(selP.nombres + " " + selP.apellidos)}</span>
                 <span className="btime">12:48 ✓✓</span>
               </div>
             </div>
@@ -1069,6 +1266,33 @@ export default function HelpMap({ accent, mapLabels = true, showReport = true }:
                 {t.copyLink}
               </button>
             </div>
+          </div>
+        </div>
+      )}
+
+      {/* ---- Donate overlay (external partners; opens in a new tab) ---- */}
+      {view === "donate" && (
+        <div className="overlay">
+          <div className="ovhead">
+            <button className="oicon" onClick={() => setView(null)}>
+              {ICON.back}
+            </button>
+            <span className="ohtitle">{t.donateTitle}</span>
+          </div>
+          <div className="ovbody">
+            <p className="donate-sub">{t.donateSub}</p>
+            <div className="donate-list">
+              {DONATIONS.map((d) => (
+                <a key={d.url} className="donate-card" href={d.url} target="_blank" rel="noopener noreferrer">
+                  <div className="donate-info">
+                    <span className="donate-name">{d.name}</span>
+                    <span className="donate-desc">{d.desc[lang]}</span>
+                  </div>
+                  <span className="donate-go">{t.donateCta}</span>
+                </a>
+              ))}
+            </div>
+            <p className="donate-note">{t.donateNote}</p>
           </div>
         </div>
       )}
@@ -1104,7 +1328,13 @@ export default function HelpMap({ accent, mapLabels = true, showReport = true }:
                   <button className={"segb " + (!rMinor ? "segb-on" : "")} onClick={() => setRMinor(false)}>
                     {t.no}
                   </button>
-                  <button className={"segb " + (rMinor ? "segb-on" : "")} onClick={() => setRMinor(true)}>
+                  <button
+                    className={"segb " + (rMinor ? "segb-on" : "")}
+                    onClick={() => {
+                      setRMinor(true);
+                      setRPhoto(null); // minors never carry a photo
+                    }}
+                  >
                     {t.yes}
                   </button>
                 </div>
@@ -1123,6 +1353,17 @@ export default function HelpMap({ accent, mapLabels = true, showReport = true }:
                 <div className="fld">
                   <span className="flabel">{t.f_edad}</span>
                   <input className="finput" placeholder="00" inputMode="numeric" value={rEdad} onChange={(e) => setREdad(e.target.value)} />
+                </div>
+              </div>
+              <div className="fld">
+                <span className="flabel">{t.sexo}</span>
+                <div className="seg">
+                  <button className={"segb " + (rSexo === "M" ? "segb-on" : "")} onClick={() => setRSexo(rSexo === "M" ? "" : "M")}>
+                    {t.male}
+                  </button>
+                  <button className={"segb " + (rSexo === "F" ? "segb-on" : "")} onClick={() => setRSexo(rSexo === "F" ? "" : "F")}>
+                    {t.female}
+                  </button>
                 </div>
               </div>
               <div className="fld">
@@ -1147,19 +1388,35 @@ export default function HelpMap({ accent, mapLabels = true, showReport = true }:
                 </select>
               </div>
               <div className="fld">
+                <span className="flabel">{t.f_procedencia}</span>
+                <input className="finput" placeholder={t.f_procedenciaPh} value={rProcedencia} onChange={(e) => setRProcedencia(e.target.value)} />
+                <span className="fhint">{t.f_procedenciaHint}</span>
+              </div>
+              <div className="fld">
                 <span className="flabel">{t.f_contact}</span>
                 <input className="finput" placeholder="+58…" value={rContact} onChange={(e) => setRContact(e.target.value)} />
               </div>
               {!rMinor && (
                 <div className="fld">
                   <span className="flabel">{t.f_photo}</span>
-                  <div className="upload">
-                    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-                      <path d="M12 16V4M8 8l4-4 4 4" />
-                      <path d="M4 16v3a1 1 0 0 0 1 1h14a1 1 0 0 0 1-1v-3" />
-                    </svg>
-                    {t.f_photoHint}
-                  </div>
+                  {rPhoto ? (
+                    <div className="upload upload-has">
+                      {/* eslint-disable-next-line @next/next/no-img-element */}
+                      <img src={rPhoto} alt="" className="upload-thumb" />
+                      <button type="button" className="upload-remove" onClick={() => setRPhoto(null)}>
+                        {t.removePhoto}
+                      </button>
+                    </div>
+                  ) : (
+                    <label className="upload">
+                      <input type="file" accept="image/*" onChange={onPickPhoto} style={{ display: "none" }} disabled={rPhotoBusy} />
+                      <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                        <path d="M12 16V4M8 8l4-4 4 4" />
+                        <path d="M4 16v3a1 1 0 0 0 1 1h14a1 1 0 0 0 1-1v-3" />
+                      </svg>
+                      {rPhotoBusy ? t.photoBusy : t.f_photoHint}
+                    </label>
+                  )}
                 </div>
               )}
               <div className="note">
@@ -1168,6 +1425,12 @@ export default function HelpMap({ accent, mapLabels = true, showReport = true }:
                   <path d="M12 11v5M12 8h.01" />
                 </svg>
                 {t.note}
+              </div>
+              <div className="note">
+                <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                  <path d="M12 3l7 3v5c0 4.5-3 7.5-7 9-4-1.5-7-4.5-7-9V6l7-3z" />
+                </svg>
+                {t.noteMinors}
               </div>
               <button className="btnp" onClick={submitReport}>
                 {t.submit}
@@ -1209,7 +1472,7 @@ export default function HelpMap({ accent, mapLabels = true, showReport = true }:
                     autoComplete="username"
                     value={loginEmail}
                     onChange={(e) => setLoginEmail(e.target.value)}
-                    placeholder="admin@helpmap.ve"
+                    placeholder="admin@helpmapve.net"
                   />
                 </div>
                 <div className="fld">
@@ -1454,6 +1717,8 @@ export default function HelpMap({ accent, mapLabels = true, showReport = true }:
       )}
 
       {!!toast && <div className="toast">{toast}</div>}
+
+      <Tour open={tourOpen} lang={lang} onClose={closeTour} />
     </div>
   );
 }

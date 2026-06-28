@@ -14,8 +14,8 @@ export async function generateMetadata({ params }: Params): Promise<Metadata> {
   }
   const name = `${p.nombres} ${p.apellidos}`;
   const status = SM[p.estatus].es;
-  const title = `${name} — ${status} · HelpMap Venezuela`;
-  const description = `${status} en ${p.location_name}. Mapa de emergencia humanitario — Caracas, La Guaira y Miranda.`;
+  const title = `${name} · ${status} · HelpMap Venezuela`;
+  const description = `${status} en ${p.location_name}. Mapa de emergencia humanitario · Caracas, La Guaira y Miranda.`;
   // og:image is provided by ./opengraph-image.tsx automatically.
   return {
     title,
@@ -47,6 +47,7 @@ export default async function PatientPage({ params }: Params) {
   const status = SM[p.estatus];
   const initials = ((p.nombres[0] || "") + (p.apellidos[0] || "")).toUpperCase() || "··";
   const rows: [string, string][] = [
+    ["Estatus", status.es],
     ["Cédula", p.ci_display],
     ["Edad", p.edad != null ? `${p.edad} años` : "—"],
     ["Sexo", p.sexo === "F" ? "Femenino" : p.sexo === "M" ? "Masculino" : "—"],
@@ -87,7 +88,7 @@ export default async function PatientPage({ params }: Params) {
           ))}
         </div>
 
-        <PatientActions id={p.id} name={name} statusLabel={status.es} locationName={p.location_name} />
+        <PatientActions id={p.id} name={name} statusLabel={status.es} locationName={p.location_name} lat={p.lat} lng={p.lng} />
       </div>
     </div>
   );

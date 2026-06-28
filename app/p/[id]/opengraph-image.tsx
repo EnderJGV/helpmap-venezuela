@@ -49,7 +49,7 @@ export default async function Image({ params }: { params: Promise<{ id: string }
         </div>
 
         <div style={{ display: "flex", fontSize: 26, color: "#7b818c" }}>
-          helpmap.ve — Caracas · La Guaira · Miranda
+          helpmapve.net · Caracas · La Guaira · Miranda
         </div>
       </div>
     ),

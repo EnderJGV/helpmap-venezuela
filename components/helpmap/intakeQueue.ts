@@ -15,9 +15,18 @@ export interface IntakeSubmission {
   location_id: string;
   location_name: string;
   estatus: string;
+  // Home origin / neighborhood. Admin-only — collected at intake for the team,
+  // NEVER shown publicly (CLAUDE.md §2; the patients_public view strips it).
+  procedencia: string | null;
   contacto: string | null;
   lang: string;
   source: "web";
+  // Photo (adults only). `foto_b64` is the compressed image held LOCALLY until a
+  // connection lets us upload it; it is NEVER sent to n8n. `foto_url` is the
+  // bucket object's public URL produced by the upload — this is the field the DB
+  // (column `foto_url`) and the n8n spreadsheet expect. There is no `foto_path`.
+  foto_b64?: string | null;
+  foto_url?: string | null;
 }
 
 const KEY = "helpmap:intake-queue:v1";
@@ -52,11 +61,41 @@ export function enqueue(sub: IntakeSubmission) {
 }
 
 async function send(sub: IntakeSubmission): Promise<"sent" | "drop" | "keep"> {
+  // Upload the photo first (online only). On a definitive failure we proceed
+  // without the photo rather than blocking the reunification text forever; on a
+  // network failure we keep the item queued and retry later.
+  if (sub.foto_b64 && !sub.foto_url && !sub.is_minor) {
+    try {
+      const { uploadIntakePhoto } = await import("./uploadPhoto");
+      sub.foto_url = await uploadIntakePhoto(sub.foto_b64);
+      sub.foto_b64 = null;
+      // Persist progress so a later send doesn't re-upload.
+      write(read().map((x) => (x.id === sub.id ? sub : x)));
+      console.debug("[intake] foto subida → foto_url:", sub.foto_url);
+    } catch (e) {
+      if (typeof navigator !== "undefined" && navigator.onLine === false) return "keep";
+      // Online but upload failed (bad file / policy): drop the photo, keep text.
+      console.warn("[intake] fallo al subir la foto, se envía sin foto:", e);
+      sub.foto_b64 = null;
+    }
+  }
+
+  // Never forward the raw image binary to n8n — only the public URL (foto_url).
+  const { foto_b64: _omit, ...payload } = sub;
+  void _omit;
+
+  // DEBUG: confirm the payload carries foto_url (a URL) and NOT foto_path.
+  console.debug("[intake] POST /api/intake →", {
+    id: payload.id,
+    foto_url: payload.foto_url ?? null,
+    foto_path_present: "foto_path" in payload, // must be false
+  });
+
   try {
     const res = await fetch("/api/intake", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify(sub),
+      body: JSON.stringify(payload),
     });
     if (res.ok) return "sent";
     // 4xx = the payload itself is invalid; it will never succeed, so drop it.

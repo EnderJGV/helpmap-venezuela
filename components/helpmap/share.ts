@@ -11,7 +11,13 @@ export function patientUrl(id: string) {
 }
 
 export function shareText(name: string, statusLabel: string, locationName: string) {
-  return `${name} — ${statusLabel} · ${locationName} · HelpMap Venezuela`;
+  return `${name} · ${statusLabel} · ${locationName} · HelpMap Venezuela`;
+}
+
+// Google Maps directions to a center's coordinates ("Cómo llegar"). Works on web
+// and deep-links into the Maps app on mobile.
+export function mapsDirectionsUrl(lat: number, lng: number) {
+  return `https://www.google.com/maps/dir/?api=1&destination=${lat},${lng}`;
 }
 
 export function whatsappUrl(url: string, text: string) {
@@ -47,6 +53,47 @@ export async function copyText(text: string): Promise<boolean> {
     return ok;
   } catch {
     return false;
+  }
+}
+
+// Generates the patient story banner (1080×1920 PNG via /p/[id]/story) and hands
+// it to the native share sheet as a FILE — on mobile the user can then pick
+// Instagram → Story/Chat (the only way to reach IG stories; IG has no web share
+// intent). Falls back to downloading the image when file-share is unsupported.
+export type StoryShareResult = "shared" | "downloaded" | "error";
+
+export async function shareStoryImage(id: string, title: string): Promise<StoryShareResult> {
+  try {
+    const res = await fetch(patientPath(id) + "/story");
+    if (!res.ok) return "error";
+    const blob = await res.blob();
+    const file = new File([blob], `helpmap-${id}.png`, { type: "image/png" });
+
+    const canShareFile =
+      typeof navigator !== "undefined" &&
+      typeof navigator.canShare === "function" &&
+      navigator.canShare({ files: [file] });
+
+    if (canShareFile && typeof navigator.share === "function") {
+      try {
+        await navigator.share({ files: [file], title });
+        return "shared";
+      } catch {
+        /* user cancelled → fall through to download */
+      }
+    }
+
+    const objUrl = URL.createObjectURL(blob);
+    const a = document.createElement("a");
+    a.href = objUrl;
+    a.download = `helpmap-${id}.png`;
+    document.body.appendChild(a);
+    a.click();
+    document.body.removeChild(a);
+    URL.revokeObjectURL(objUrl);
+    return "downloaded";
+  } catch {
+    return "error";
   }
 }
 

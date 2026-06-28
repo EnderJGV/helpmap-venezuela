@@ -4,9 +4,11 @@ import { useState } from "react";
 import Link from "next/link";
 import {
   copyText,
+  mapsDirectionsUrl,
   nativeShare,
   openShare,
   patientUrl,
+  shareStoryImage,
   shareText,
   telegramUrl,
   whatsappUrl,
@@ -17,19 +19,24 @@ export default function PatientActions({
   name,
   statusLabel,
   locationName,
+  lat,
+  lng,
 }: {
   id: string;
   name: string;
   statusLabel: string;
   locationName: string;
+  lat: number;
+  lng: number;
 }) {
   const [toast, setToast] = useState("");
+  const [building, setBuilding] = useState(false);
   const url = patientUrl(id);
   const text = shareText(name, statusLabel, locationName);
 
   const flash = (m: string) => {
     setToast(m);
-    setTimeout(() => setToast(""), 2200);
+    setTimeout(() => setToast(""), 2800);
   };
 
   const share = async () => {
@@ -38,6 +45,18 @@ export default function PatientActions({
       const copied = await copyText(url);
       flash(copied ? "Enlace copiado" : "No se pudo copiar");
     }
+  };
+
+  // Generates the 1080×1920 story banner server-side, then opens the native
+  // share sheet (picks Instagram → "Historia") or downloads it as fallback.
+  const shareStory = async () => {
+    if (building) return;
+    setBuilding(true);
+    const r = await shareStoryImage(id, name);
+    if (r === "shared") flash("Comparte la imagen en tu historia y agrega el sticker de enlace.");
+    else if (r === "downloaded") flash("Imagen descargada. Súbela a tu historia de Instagram.");
+    else flash("No se pudo crear la imagen. Intenta de nuevo.");
+    setBuilding(false);
   };
 
   return (
@@ -52,14 +71,9 @@ export default function PatientActions({
         <button style={S.t} onClick={() => openShare(telegramUrl(url, text))}>
           <span style={{ ...S.ti, background: "#229ed9" }}>TG</span>Telegram
         </button>
-        <button
-          style={S.t}
-          onClick={async () => {
-            const ok = await copyText(url);
-            flash(ok ? "Enlace copiado. Pegalo en tu historia de Instagram." : "No se pudo copiar");
-          }}
-        >
-          <span style={{ ...S.ti, background: "#e1306c" }}>IG</span>Instagram
+        <button style={S.t} onClick={shareStory} disabled={building}>
+          <span style={{ ...S.ti, background: "#e1306c" }}>IG</span>
+          {building ? "Creando…" : "Historia IG"}
         </button>
         <button
           style={S.t}
@@ -71,6 +85,14 @@ export default function PatientActions({
           <span style={{ ...S.ti, background: "#15181d" }}>↗</span>Copiar enlace
         </button>
       </div>
+      <a
+        style={{ ...S.btn, ...S.directions }}
+        href={mapsDirectionsUrl(lat, lng)}
+        target="_blank"
+        rel="noopener noreferrer"
+      >
+        📍 Cómo llegar
+      </a>
       <Link href="/" style={S.back}>
         ← Ver en el mapa
       </Link>
@@ -83,6 +105,7 @@ const S: Record<string, React.CSSProperties> = {
   box: { marginTop: 18, position: "relative" },
   btn: { width: "100%", borderRadius: 13, padding: 15, fontSize: 14.5, fontWeight: 600, cursor: "pointer", fontFamily: "inherit", border: "none" },
   primary: { background: "#15181d", color: "#fff" },
+  directions: { display: "block", textAlign: "center", textDecoration: "none", marginTop: 10, background: "#fff", color: "#16191f", border: "1px solid #ebecef" },
   grid: { display: "grid", gridTemplateColumns: "1fr 1fr", gap: 10, marginTop: 12 },
   t: { display: "flex", alignItems: "center", gap: 10, border: "1px solid #ebecef", borderRadius: 13, padding: 13, fontSize: 13, fontWeight: 600, cursor: "pointer", background: "#fff", color: "#16191f", fontFamily: "inherit" },
   ti: { width: 30, height: 30, borderRadius: 9, display: "flex", alignItems: "center", justifyContent: "center", color: "#fff", fontSize: 11, fontWeight: 700, flex: "0 0 auto" },

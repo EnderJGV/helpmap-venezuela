@@ -13,14 +13,29 @@ const geistMono = Geist_Mono({
   subsets: ["latin"],
 });
 
+const DESCRIPTION =
+  "Base de datos verificada de personas afectadas por el terremoto en Caracas, La Guaira y Miranda, en constante actualización por personal médico en campo.";
+
 export const metadata: Metadata = {
   applicationName: "HelpMap Venezuela",
   title: "HelpMap Venezuela",
-  description: "Registro humanitario · Caracas y La Guaira",
+  description: DESCRIPTION,
   appleWebApp: {
     capable: true,
     statusBarStyle: "black-translucent",
     title: "HelpMap",
+  },
+  openGraph: {
+    title: "HelpMap Venezuela",
+    description: DESCRIPTION,
+    siteName: "HelpMap Venezuela",
+    type: "website",
+    locale: "es_VE",
+  },
+  twitter: {
+    card: "summary_large_image",
+    title: "HelpMap Venezuela",
+    description: DESCRIPTION,
   },
 };
 

@@ -98,14 +98,20 @@ export interface Strings {
   login: string; loginTitle: string; email: string; password: string; signIn: string; signOut: string;
   loginError: string; loginHint: string; adminLocalNote: string; loggedInAs: string;
   f_contact: string; f_minor: string; queuedOffline: string; pendingSync: string; synced: string; reqNameLoc: string;
-  igCopied: string;
+  igCopied: string; noteMinors: string;
+  photoBusy: string; photoError: string; removePhoto: string;
+  f_procedencia: string; f_procedenciaPh: string; f_procedenciaHint: string;
+  storyBuilding: string; storyShared: string; storyDownloaded: string; storyError: string;
+  donate: string; donateTitle: string; donateSub: string; donateCta: string; donateNote: string;
+  saveError: string; delBlocked: string;
+  directions: string;
 }
 
 export const T: Record<Lang, Strings> = {
   es: {
-    appName: "HelpMap Venezuela", tagline: "Mapa de emergencia · Caracas, La Guaira y Miranda",
+    appName: "HelpMap VE", tagline: "OSINT humanitario",
     search: "Buscar por nombre, apellido o cédula", all: "Todos", allStates: "Todos los estados", allCenters: "Todos los centros",
-    report: "Subir info", people: "personas", yrs: "años", noResults: "Sin resultados. Probá con otro nombre o filtro.",
+    report: "Subir info", people: "personas", yrs: "años", noResults: "Sin resultados. Intenta con otro nombre o filtro.",
     female: "Femenino", male: "Masculino", ci: "Cédula", edad: "Edad", sexo: "Sexo", ubic: "Centro", type: "Tipo",
     municipality: "Municipio", state: "Estado", verified: "Verificado", verifiedYes: "Verificado", verifiedNo: "Sin verificar",
     updated: "Actualizado", share: "Compartir", seeMap: "Ver en el mapa", detailTitle: "Ficha de la persona",
@@ -114,8 +120,8 @@ export const T: Record<Lang, Strings> = {
     donationInfo: "Centro de acopio · información de contacto",
     staleData: "Datos posiblemente desactualizados (sin conexión)",
     f_ape: "Apellidos", f_nom: "Nombres", f_ci: "Cédula (CI)", f_edad: "Edad", f_sexo: "Sexo",
-    f_ubic: "Centro / ubicación", f_photo: "Foto", f_photoHint: "Tocá para subir una foto (solo adultos)",
-    selectHosp: "Seleccioná un centro", submit: "Enviar para revisión",
+    f_ubic: "Centro / ubicación", f_photo: "Foto", f_photoHint: "Toca para subir una foto (solo adultos)",
+    selectHosp: "Selecciona un centro", submit: "Enviar para revisión",
     note: "Cada reporte es revisado por nuestro equipo y contactos médicos antes de publicarse. No se publica de inmediato.",
     sent: "Recibido para revisión. Gracias.", shareTitle: "Compartir ficha",
     shareDesc: "Así se verá el enlace al pegarlo en WhatsApp, Telegram o Instagram.", cardKicker: "MAPA DE EMERGENCIA",
@@ -128,18 +134,37 @@ export const T: Record<Lang, Strings> = {
     login: "Ingresar", loginTitle: "Acceso de administración", email: "Correo", password: "Contraseña",
     signIn: "Iniciar sesión", signOut: "Cerrar sesión", loginError: "Credenciales inválidas.",
     loginHint: "Sólo personal autorizado. Acceso protegido por Supabase Auth.",
-    adminLocalNote: "Los cambios son locales en esta sesión. La escritura a la base de datos con registro de auditoría es la próxima fase.",
+    adminLocalNote: "Los cambios se guardan en la base de datos. El registro de auditoría (quién cambió qué) es la próxima fase.",
     loggedInAs: "Sesión",
     f_contact: "Contacto (WhatsApp/teléfono, opcional)",
     f_minor: "¿Es menor de edad?",
     queuedOffline: "Sin conexión. Guardado: se enviará al volver el internet.",
     pendingSync: "pendiente(s) por enviar cuando vuelva la conexión",
     synced: "Envíos sincronizados con el equipo.",
-    reqNameLoc: "Indicá al menos nombre o apellido y el centro.",
-    igCopied: "Enlace copiado. Pegalo en tu historia o perfil de Instagram.",
+    reqNameLoc: "Indica al menos nombre o apellido y el centro.",
+    igCopied: "Enlace copiado. Pégalo en tu historia o perfil de Instagram.",
+    noteMinors: "La información de menores de edad está estrictamente protegida: nunca mostramos sus fotos. Su visualización completa se limita exclusivamente a personal médico y familiares.",
+    photoBusy: "Procesando foto…",
+    photoError: "No se pudo procesar la imagen. Intenta con otra.",
+    removePhoto: "Quitar foto",
+    f_procedencia: "Procedencia",
+    f_procedenciaPh: "Zona o sector de origen",
+    f_procedenciaHint: "Solo para el equipo de verificación. No se muestra públicamente.",
+    storyBuilding: "Generando imagen para tu historia…",
+    storyShared: "Elige Instagram → Historia y agrega el sticker de enlace.",
+    storyDownloaded: "Imagen descargada. Súbela a tu historia de Instagram.",
+    storyError: "No se pudo crear la imagen. Intenta de nuevo.",
+    donate: "Donar",
+    donateTitle: "Donar",
+    donateSub: "Apoya a las organizaciones que están ayudando en el terreno.",
+    donateCta: "Donar",
+    donateNote: "Las donaciones van directo a cada organización. HelpMap no recibe ni administra fondos.",
+    saveError: "No se pudo guardar en la base de datos. Intenta de nuevo.",
+    delBlocked: "No se pudo eliminar. Puede que haya personas registradas en este centro.",
+    directions: "Cómo llegar",
   },
   en: {
-    appName: "HelpMap Venezuela", tagline: "Emergency map · Caracas, La Guaira & Miranda",
+    appName: "HelpMap VE", tagline: "Humanitarian OSINT",
     search: "Search by name, surname or ID", all: "All", allStates: "All states", allCenters: "All centers",
     report: "Upload info", people: "people", yrs: "yrs", noResults: "No results. Try another name or filter.",
     female: "Female", male: "Male", ci: "ID (CI)", edad: "Age", sexo: "Sex", ubic: "Center", type: "Type",
@@ -164,15 +189,34 @@ export const T: Record<Lang, Strings> = {
     login: "Sign in", loginTitle: "Admin access", email: "Email", password: "Password", signIn: "Sign in",
     signOut: "Sign out", loginError: "Invalid credentials.",
     loginHint: "Authorized staff only. Protected by Supabase Auth.",
-    adminLocalNote: "Changes are local to this session. Writing to the database with an audit log is the next phase.",
+    adminLocalNote: "Changes are saved to the database. The audit log (who changed what) is the next phase.",
     loggedInAs: "Session",
     f_contact: "Contact (WhatsApp/phone, optional)",
     f_minor: "Is a minor?",
-    queuedOffline: "Offline. Saved — it will be sent when you're back online.",
+    queuedOffline: "Offline. Saved. It will be sent when you're back online.",
     pendingSync: "pending to send when the connection returns",
     synced: "Submissions synced with the team.",
     reqNameLoc: "Enter at least a first/last name and the center.",
     igCopied: "Link copied. Paste it in your Instagram story or profile.",
+    noteMinors: "Minors' information is strictly protected: we never show their photos. Full visibility is limited exclusively to medical staff and family members.",
+    photoBusy: "Processing photo…",
+    photoError: "Couldn't process the image. Try another one.",
+    removePhoto: "Remove photo",
+    f_procedencia: "Home origin",
+    f_procedenciaPh: "Neighborhood or area of origin",
+    f_procedenciaHint: "Verification team only. Never shown publicly.",
+    storyBuilding: "Generating image for your story…",
+    storyShared: "Pick Instagram → Story and add the link sticker.",
+    storyDownloaded: "Image downloaded. Upload it to your Instagram story.",
+    storyError: "Couldn't create the image. Try again.",
+    donate: "Donate",
+    donateTitle: "Donate",
+    donateSub: "Support the organizations helping on the ground.",
+    donateCta: "Donate",
+    donateNote: "Donations go directly to each organization. HelpMap neither receives nor manages funds.",
+    saveError: "Couldn't save to the database. Try again.",
+    delBlocked: "Couldn't delete. There may be people registered at this center.",
+    directions: "Get directions",
   },
 };
 
