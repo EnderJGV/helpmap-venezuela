@@ -321,4 +321,6 @@ textarea.finput{resize:vertical;min-height:96px;font-family:inherit;line-height:
 .tour-skip{background:none;border:none;color:var(--mut);font-size:13px;font-weight:600;cursor:pointer;padding:13px 8px;font-family:inherit}
 .tour-back{background:#fff;border:1px solid var(--line);border-radius:13px;padding:14px 20px;font-size:14px;font-weight:600;color:var(--ink);cursor:pointer;font-family:inherit}
 .tour-next{flex:1;background:var(--accent);color:#fff;border:none;border-radius:13px;padding:14px;font-size:14.5px;font-weight:700;cursor:pointer;font-family:inherit}
+.tour-doclink{display:block;text-align:center;margin-top:12px;font-size:12.5px;font-weight:600;color:var(--mut);text-decoration:none}
+.tour-doclink:hover{color:var(--ink);text-decoration:underline}
 @media(min-width:520px){.tourwrap{align-items:center}.tour{border-radius:22px}}

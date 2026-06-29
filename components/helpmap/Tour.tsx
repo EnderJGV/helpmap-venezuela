@@ -240,6 +240,10 @@ export default function Tour({ open, lang, onClose }: { open: boolean; lang: Lan
             {last ? (lang === "es" ? "Entendido" : "Got it") : lang === "es" ? "Siguiente" : "Next"}
           </button>
         </div>
+
+        <a className="tour-doclink" href={lang === "en" ? "/docs?lang=en" : "/docs"}>
+          {lang === "es" ? "Ver documentación" : "View documentation"}
+        </a>
       </div>
     </div>
   );
