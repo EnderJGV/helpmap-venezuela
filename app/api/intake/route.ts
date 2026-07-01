@@ -1,11 +1,25 @@
 import { NextResponse } from "next/server";
+import { clientIp, rateLimit, rateLimitHeaders } from "@/lib/rateLimit";
 
 // Public intake endpoint. The browser (online or flushing its offline queue)
 // POSTs a submission here; we forward it to the n8n INTAKE webhook for cleanup
 // and human verification. NEVER writes to the database (CLAUDE.md §7).
 // The webhook URL is server-side only and never exposed to the client.
 
+// Per-IP flood guard. Kept generous because a browser flushing its OFFLINE QUEUE may
+// legitimately POST several queued submissions back-to-back after reconnecting.
+const RATE_LIMIT = 20; // requests per window per IP
+const RATE_WINDOW_MS = 60_000;
+
 export async function POST(request: Request) {
+  const rl = rateLimit(`intake:${clientIp(request)}`, RATE_LIMIT, RATE_WINDOW_MS);
+  if (!rl.ok) {
+    return NextResponse.json(
+      { error: "rate_limited", retry_after: rl.retryAfter },
+      { status: 429, headers: { ...rateLimitHeaders(rl), "Retry-After": String(rl.retryAfter) } },
+    );
+  }
+
   const webhook = process.env.N8N_UPLOAD_WEBHOOK_URL;
   if (!webhook) {
     // Not configured yet — tell the client to keep the item queued and retry.

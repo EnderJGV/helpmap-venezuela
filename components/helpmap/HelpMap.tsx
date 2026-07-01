@@ -1812,6 +1812,27 @@ export default function HelpMap({ accent, mapLabels = true, showReport = true }:
     loadAudit();
     if (isAdmin) loadVolRequests();
   }, [isAdmin, isVolunteer, loadContributions, loadAudit, loadVolRequests]);
+  // Light auto-refresh (no realtime backend yet — CLAUDE.md §"Novedades" pending). While a
+  // staff session is active we re-pull the cheap "needs attention" counts every 60s so the
+  // gear badge stays live even before the panel is opened; the heavier 120-row audit feed is
+  // only re-pulled while the admin panel is actually open. Skipped when the tab is hidden to
+  // save the flaky-3G data budget (§6); a fresh pull also runs on becoming visible again.
+  useEffect(() => {
+    if (!(isAdmin || isVolunteer)) return;
+    const tick = () => {
+      if (typeof document !== "undefined" && document.hidden) return;
+      loadContributions();
+      if (isAdmin) loadVolRequests();
+      if (view === "admin") loadAudit();
+    };
+    const id = window.setInterval(tick, 60_000);
+    const onVis = () => { if (!document.hidden) tick(); };
+    document.addEventListener("visibilitychange", onVis);
+    return () => {
+      window.clearInterval(id);
+      document.removeEventListener("visibilitychange", onVis);
+    };
+  }, [isAdmin, isVolunteer, view, loadContributions, loadVolRequests, loadAudit]);
   const reviewVolRequest = async (id: string, action: "approve" | "reject") => {
     try {
       const res = await fetch("/api/admin/volunteers", {
@@ -3232,7 +3253,18 @@ export default function HelpMap({ accent, mapLabels = true, showReport = true }:
                         )}
                       </div>
                     )}
-                    <button className="addbtn" onClick={loadAudit}>
+                    <button
+                      className="addbtn"
+                      onClick={() => {
+                        // Refresh EVERYTHING the panel shows, not just the feed: the
+                        // pending-aportes / volunteer-request counts drive the badge and
+                        // the pills above, so refreshing only the audit list would leave
+                        // them stale (looks like "nothing updated").
+                        loadAudit();
+                        loadContributions();
+                        if (isAdmin) loadVolRequests();
+                      }}
+                    >
                       {t.newsRefresh}
                     </button>
                     {audit.length === 0 ? (

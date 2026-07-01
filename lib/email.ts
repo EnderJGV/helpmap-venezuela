@@ -1,5 +1,6 @@
 import "server-only";
 import nodemailer from "nodemailer";
+import { cleanName } from "@/lib/sanitize";
 
 // In-app email via SMTP (cPanel mailbox on mail.helpmapvzla.net). Credentials come
 // from env — the password is NEVER hardcoded. If SMTP_PASS isn't configured the
@@ -93,7 +94,7 @@ export async function sendContactEmail(opts: {
   const to = process.env.CONTACT_TO || USER;
   const kindLabel =
     opts.kind === "volunteer" ? "Voluntariado" : opts.kind === "donation" ? "Donaciones" : "Contacto";
-  const safeName = (opts.name || "Anónimo").slice(0, 120);
+  const safeName = cleanName(opts.name) || "Anónimo";
   const replyTo = opts.replyTo && /^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(opts.replyTo) ? opts.replyTo : undefined;
   const html = `
   <div style="font-family:Arial,Helvetica,sans-serif;max-width:560px;color:#16191f">
@@ -121,42 +122,9 @@ export async function sendContactEmail(opts: {
   }
 }
 
-// Auto-acknowledgment sent back to a user who wrote to us through the in-app
-// contact form. Reassures them the team received the message and will follow up.
-// Best-effort: returns false (and the caller ignores it) if SMTP isn't configured
-// or no valid reply address was supplied.
-export async function sendContactAck(opts: {
-  to: string;
-  kind?: "volunteer" | "donation";
-  name?: string;
-}): Promise<boolean> {
-  const to = opts.to;
-  if (!to || !/^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(to)) return false;
-  const tx = getTransport();
-  if (!tx) return false;
-  const greetName = (opts.name || "").trim().slice(0, 80);
-  const hi = greetName ? `Hola ${escapeHtml(greetName)},` : "Hola,";
-  const intro =
-    opts.kind === "volunteer"
-      ? "Gracias por ofrecerte como voluntario/a en HelpMap Venezuela."
-      : opts.kind === "donation"
-        ? "Gracias por proponer tu iniciativa de donaciones a HelpMap Venezuela."
-        : "Gracias por escribir a HelpMap Venezuela.";
-  const html = `
-  <div style="font-family:Arial,Helvetica,sans-serif;max-width:520px;margin:0 auto;color:#16191f">
-    <h2 style="margin:0 0 6px">¡Recibimos tu mensaje!</h2>
-    <p style="color:#555;line-height:1.6;font-size:14px">${escapeHtml(hi)}</p>
-    <p style="color:#555;line-height:1.6;font-size:14px">
-      ${intro} <b>Estamos evaluando tu solicitud y nos pondremos en contacto contigo
-      tan pronto como sea posible.</b>
-    </p>
-    <p style="color:#888;font-size:12px;line-height:1.6;margin-top:16px">
-      Este es un mensaje automático de confirmación; no necesitas responderlo. Si no
-      escribiste a HelpMap Venezuela, puedes ignorar este correo.
-    </p>
-  </div>`;
-  return sendMail(to, "Recibimos tu mensaje · HelpMap Venezuela", html);
-}
+// NOTE: there is intentionally NO auto-acknowledgment email to the sender. Echoing a
+// user-supplied address+name into an email from our own domain let attackers use us as
+// a phishing relay (see app/api/contact/route.ts). Contact confirmation is IN-APP only.
 
 // Onboarding email for a newly created volunteer account.
 export async function sendVolunteerWelcome(to: string, tempPassword: string, siteUrl: string): Promise<boolean> {

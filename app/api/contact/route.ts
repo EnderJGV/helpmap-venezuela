@@ -1,11 +1,26 @@
 import { NextResponse } from "next/server";
-import { sendContactEmail, sendContactAck } from "@/lib/email";
+import { sendContactEmail } from "@/lib/email";
+import { clientIp, rateLimit, rateLimitHeaders } from "@/lib/rateLimit";
 
 // Public "write to us" endpoint: an app user sends a message (+ optional images)
 // which we email to the team inbox via nodemailer. No DB writes. Basic guards only
 // (required message, max 4 images); images should already be compressed client-side.
 
+// Each POST fires up to TWO emails (team + user ack), so it's a mail-bomb / SMTP-quota
+// vector if unguarded. Keep the per-IP limit TIGHT — a real person writes once, not 5x/min.
+const RATE_LIMIT = 5; // requests per window per IP
+const RATE_WINDOW_MS = 60_000;
+
 export async function POST(request: Request) {
+  // Rate limit per client IP before doing any work (sending mail is the expensive part).
+  const rl = rateLimit(`contact:${clientIp(request)}`, RATE_LIMIT, RATE_WINDOW_MS);
+  if (!rl.ok) {
+    return NextResponse.json(
+      { error: "rate_limited", retry_after: rl.retryAfter },
+      { status: 429, headers: { ...rateLimitHeaders(rl), "Retry-After": String(rl.retryAfter) } },
+    );
+  }
+
   let body: { kind?: string; name?: string; email?: string; message?: string; images?: unknown };
   try {
     body = await request.json();
@@ -30,19 +45,10 @@ export async function POST(request: Request) {
   });
   if (!ok) return NextResponse.json({ error: "email_unavailable" }, { status: 502 });
 
-  // Auto-acknowledgment back to the user. We AWAIT it (rather than fire-and-forget)
-  // so the send actually completes before the handler returns — otherwise the
-  // request can finish and tear down the async work mid-flight, and the user never
-  // gets the email. A failure here still must NOT fail the response: the team email
-  // already went through, which is what matters.
-  if (typeof body.email === "string" && body.email.trim()) {
-    try {
-      const ackOk = await sendContactAck({ to: body.email.trim(), kind, name: body.name });
-      if (!ackOk) console.warn("[contact] ack email not sent (invalid address or SMTP unavailable):", body.email);
-    } catch (e) {
-      console.error("[contact] ack email error:", e);
-    }
-  }
-
+  // NOTE: we deliberately DO NOT send an auto-acknowledgment back to the sender's
+  // address. Doing so let an attacker use our trusted domain (info@helpmapvzla.net)
+  // to deliver arbitrary content to any address they typed in `email` (scam/phishing
+  // vector — see the abuse report). Confirmation to the user is shown IN-APP only
+  // (the `cDone` panel). The team notification above is the only mail this route sends.
   return NextResponse.json({ ok: true });
 }

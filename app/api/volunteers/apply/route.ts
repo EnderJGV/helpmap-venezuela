@@ -1,6 +1,7 @@
 import { NextResponse } from "next/server";
 import { createAdminClient } from "@/utils/supabase/admin";
 import { clientIp, rateLimit } from "@/lib/rateLimit";
+import { cleanName, cleanText } from "@/lib/sanitize";
 
 // Public volunteer self-signup. The applicant chooses their OWN password here; we create a
 // pre-confirmed auth user with NO role (so the account exists but has zero access — is_staff()
@@ -38,10 +39,14 @@ export async function POST(request: Request) {
   const str = (v: unknown, max: number) => (typeof v === "string" ? v.trim().slice(0, max) : "");
   const email = str(body.email, 200).toLowerCase();
   const password = typeof body.password === "string" ? body.password : "";
-  const nombre = str(body.nombre, 120);
-  const perfil = str(body.perfil, 60);
-  const fuentes = str(body.fuentes, 1000);
-  const telefono = str(body.telefono, 40);
+  // Sanitize what we STORE + later echo in the admin panel / audit feed. `nombre` is a
+  // real name (cleanName strips URLs/markup/digits so it can't carry a scam link, cf. the
+  // "<script>…" junk seen in the feed); perfil/fuentes/telefono are free text (cleanText
+  // strips angle brackets so no "<script>" is ever stored — sources/URLs in fuentes stay).
+  const nombre = cleanName(str(body.nombre, 120));
+  const perfil = cleanText(body.perfil, 60);
+  const fuentes = cleanText(body.fuentes, 1000);
+  const telefono = cleanText(body.telefono, 40);
 
   if (!isEmail(email)) return NextResponse.json({ error: "invalid_email" }, { status: 422 });
   if (!nombre) return NextResponse.json({ error: "missing_name" }, { status: 422 });

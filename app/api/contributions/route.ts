@@ -1,6 +1,13 @@
 import { NextResponse } from "next/server";
 import { cookies } from "next/headers";
 import { createClient } from "@/utils/supabase/server";
+import { clientIp, rateLimit, rateLimitHeaders } from "@/lib/rateLimit";
+
+// Per-IP flood guard on the PUBLIC submit (POST). A contribution can upload a photo +
+// insert a queue row, so cap it so a script can't flood the moderation queue / storage.
+// GET/PATCH are staff-gated (auth), so they don't need this.
+const RATE_LIMIT = 10; // requests per window per IP
+const RATE_WINDOW_MS = 60_000;
 
 // Private bucket holding UNREVIEWED contribution photos (db/storage_photos.sql). On
 // approval the file is copied into the public intake-photos bucket; staff preview it
@@ -34,6 +41,14 @@ async function staffSession() {
 
 // ---- Public submit -------------------------------------------------------------
 export async function POST(request: Request) {
+  const rl = rateLimit(`contrib:${clientIp(request)}`, RATE_LIMIT, RATE_WINDOW_MS);
+  if (!rl.ok) {
+    return NextResponse.json(
+      { error: "rate_limited", retry_after: rl.retryAfter },
+      { status: 429, headers: { ...rateLimitHeaders(rl), "Retry-After": String(rl.retryAfter) } },
+    );
+  }
+
   let b: { patient_id?: string; foto_url?: string | null; descripcion?: string | null; contacto?: string | null };
   try {
     b = await request.json();
