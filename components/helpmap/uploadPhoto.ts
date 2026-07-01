@@ -131,3 +131,29 @@ export async function uploadIntakePhoto(dataUrl: string): Promise<string> {
   const { data } = supabase.storage.from(BUCKET).getPublicUrl(path);
   return data.publicUrl;
 }
+
+// Private bucket for UNREVIEWED public contributions (the "Aportar foto / info" flow).
+// Unlike intake, a contribution photo must NOT be publicly reachable until a staff
+// member corroborates it (CLAUDE.md §2), so it goes to a PRIVATE bucket and we return
+// the object PATH (never a public URL). On approval the API copies it into the public
+// intake-photos bucket; staff preview it via a short-lived signed URL. See
+// db/storage_photos.sql.
+const CONTRIB_BUCKET = process.env.NEXT_PUBLIC_SUPABASE_CONTRIB_BUCKET ?? "contrib-photos";
+
+export async function uploadContributionPhoto(dataUrl: string): Promise<string> {
+  const blob = await (await fetch(dataUrl)).blob();
+  const id =
+    typeof crypto !== "undefined" && crypto.randomUUID ? crypto.randomUUID() : String(Date.now());
+  const path = `pending/${id}.jpg`; // namespaced, unguessable, no PII in the filename
+
+  const supabase = createClient();
+  const { error } = await supabase.storage.from(CONTRIB_BUCKET).upload(path, blob, {
+    contentType: "image/jpeg",
+    upsert: false,
+  });
+  if (error) throw error;
+
+  // PATH, not a URL — the bucket is private. The DB stores this path; it is only ever
+  // resolved to a (signed or, once approved, public) URL server-side.
+  return path;
+}

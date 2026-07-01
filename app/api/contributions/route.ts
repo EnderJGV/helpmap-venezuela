@@ -2,6 +2,12 @@ import { NextResponse } from "next/server";
 import { cookies } from "next/headers";
 import { createClient } from "@/utils/supabase/server";
 
+// Private bucket holding UNREVIEWED contribution photos (db/storage_photos.sql). On
+// approval the file is copied into the public intake-photos bucket; staff preview it
+// via a signed URL. Kept in sync with NEXT_PUBLIC_SUPABASE_CONTRIB_BUCKET.
+const CONTRIB_BUCKET = process.env.NEXT_PUBLIC_SUPABASE_CONTRIB_BUCKET ?? "contrib-photos";
+const PUBLIC_BUCKET = process.env.NEXT_PUBLIC_SUPABASE_INTAKE_BUCKET ?? "intake-photos";
+
 // Moderation queue for public photo/info contributions to EXISTING patient records
 // (the per-patient "Aportar foto / info" button). NOT the intake/n8n funnel — intake
 // is for people not yet in the system; this enriches a record that already exists.
@@ -80,8 +86,21 @@ export async function GET() {
     .order("created_at", { ascending: false });
   if (error) return NextResponse.json({ error: "read_failed" }, { status: 502 });
 
+  // foto_url is a PATH in the PRIVATE contrib-photos bucket (not publicly reachable).
+  // Sign it so staff can preview it in the moderation card. Legacy rows that still hold
+  // a full http(s) URL (uploaded before this change) pass through untouched.
+  const signed = await Promise.all(
+    (rows ?? []).map(async (r) => {
+      if (!r.foto_url || r.foto_url.startsWith("http")) return r;
+      const { data: s } = await supabase.storage
+        .from(CONTRIB_BUCKET)
+        .createSignedUrl(r.foto_url, 60 * 30); // 30 min — long enough to review
+      return { ...r, foto_url: s?.signedUrl ?? null };
+    })
+  );
+
   // Attach the patient's public name so the reviewer knows who each one is for.
-  const ids = Array.from(new Set((rows ?? []).map((r) => r.patient_id)));
+  const ids = Array.from(new Set(signed.map((r) => r.patient_id)));
   const names: Record<string, string> = {};
   if (ids.length) {
     const { data: pats } = await supabase.from("patients_public").select("id, nombres, apellidos").in("id", ids);
@@ -89,7 +108,7 @@ export async function GET() {
       names[p.id] = `${p.nombres ?? ""} ${p.apellidos ?? ""}`.trim();
     });
   }
-  const contributions = (rows ?? []).map((r) => ({ ...r, patient_name: names[r.patient_id] ?? "—" }));
+  const contributions = signed.map((r) => ({ ...r, patient_name: names[r.patient_id] ?? "—" }));
   return NextResponse.json({ contributions });
 }
 
@@ -124,8 +143,23 @@ export async function PATCH(request: Request) {
     if (c.foto_url) {
       const { data: pat } = await supabase.from("patients_public").select("is_minor").eq("id", c.patient_id).maybeSingle();
       if (!pat?.is_minor) {
-        const { error: upErr } = await supabase.from("patients").update({ foto_url: c.foto_url }).eq("id", c.patient_id);
-        if (upErr) return NextResponse.json({ error: "attach_failed" }, { status: 502 });
+        // Publish: the pending photo lives as a PATH in the private contrib-photos
+        // bucket. Copy it into the public intake-photos bucket and store THAT public
+        // URL on the patient. Legacy rows holding a full http(s) URL (uploaded before
+        // the private-bucket change) are attached as-is.
+        let publicUrl = c.foto_url;
+        if (!c.foto_url.startsWith("http")) {
+          const { data: blob, error: dlErr } = await supabase.storage.from(CONTRIB_BUCKET).download(c.foto_url);
+          if (dlErr || !blob) return NextResponse.json({ error: "publish_failed" }, { status: 502 });
+          const pubPath = `contrib/${c.foto_url.split("/").pop()}`;
+          const { error: upErr } = await supabase.storage
+            .from(PUBLIC_BUCKET)
+            .upload(pubPath, blob, { contentType: "image/jpeg", upsert: true });
+          if (upErr) return NextResponse.json({ error: "publish_failed" }, { status: 502 });
+          publicUrl = supabase.storage.from(PUBLIC_BUCKET).getPublicUrl(pubPath).data.publicUrl;
+        }
+        const { error: attErr } = await supabase.from("patients").update({ foto_url: publicUrl }).eq("id", c.patient_id);
+        if (attErr) return NextResponse.json({ error: "attach_failed" }, { status: 502 });
       }
     }
   }

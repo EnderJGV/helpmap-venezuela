@@ -204,6 +204,8 @@ export interface Strings {
   contactAckTitle: string; contactAckBody: string; contactAckClose: string;
   contactSegVol: string; contactSegDon: string;
   tabVolunteers: string; tabLists: string;
+  tabNews: string; newsEmpty: string; newsRefresh: string; newsPublic: string; newsSystem: string;
+  newsPendingContribs: string; newsPendingVols: string;
   addVolunteer: string; volPass: string; volGenerate: string; volCreate: string;
   volCreated: string; volCreatedNoMail: string; volCreateErr: string;
   volRevoke: string; volRevoked: string; volNone: string; volReviewNote: string; staffGuide: string;
@@ -219,6 +221,7 @@ export interface Strings {
   contribAckTitle: string; contribAckBody: string; contribAckClose: string; contribReq: string;
   contribContact: string; tabContribs: string; contribApprove: string; contribReject: string;
   contribApproved: string; contribRejected: string; contribNone: string; contribReviewNote: string;
+  contribPublishConfirm: string;
   maintBanner: string; maintTitle: string; maintHint: string;
   maintActive: string; maintInactive: string; maintOn: string; maintOff: string;
   tabRescued: string; rescuedListTitle: string; rescuedListSub: string; rescuedNone: string;
@@ -347,6 +350,13 @@ export const T: Record<Lang, Strings> = {
     contactSegDon: "Donaciones",
     tabVolunteers: "Voluntarios",
     tabLists: "Subir listas",
+    tabNews: "Novedades",
+    newsEmpty: "Sin actividad reciente todavía.",
+    newsRefresh: "Actualizar",
+    newsPublic: "Público",
+    newsSystem: "Sistema (n8n)",
+    newsPendingContribs: "{n} aporte(s) por revisar",
+    newsPendingVols: "{n} solicitud(es) de voluntariado",
     addVolunteer: "Nuevo voluntario",
     volPass: "Contraseña temporal",
     volGenerate: "Generar",
@@ -403,6 +413,8 @@ export const T: Record<Lang, Strings> = {
     contribApproved: "Aporte aprobado",
     contribRejected: "Aporte rechazado",
     contribNone: "No hay aportes pendientes.",
+    contribPublishConfirm:
+      "Esta persona ya está VERIFICADA, así que aprobar esta foto la hará pública de inmediato (sin paso adicional). ¿Confirmas que la foto es correcta y puede mostrarse públicamente?",
     contribReviewNote: "Aportes del público a registros existentes. Al aprobar una foto se adjunta a la persona (solo se ve en público si el registro está verificado).",
     maintBanner: "Sitio en mantenimiento: estamos re-verificando los datos. Algunos registros pueden no aparecer. Vuelve pronto.",
     maintTitle: "Modo mantenimiento",
@@ -571,6 +583,13 @@ export const T: Record<Lang, Strings> = {
     contactSegDon: "Donations",
     tabVolunteers: "Volunteers",
     tabLists: "Upload lists",
+    tabNews: "Activity",
+    newsEmpty: "No recent activity yet.",
+    newsRefresh: "Refresh",
+    newsPublic: "Public",
+    newsSystem: "System (n8n)",
+    newsPendingContribs: "{n} contribution(s) to review",
+    newsPendingVols: "{n} volunteer application(s)",
     addVolunteer: "New volunteer",
     volPass: "Temp password",
     volGenerate: "Generate",
@@ -628,6 +647,8 @@ export const T: Record<Lang, Strings> = {
     contribRejected: "Contribution rejected",
     contribNone: "No pending contributions.",
     contribReviewNote: "Public contributions to existing records. Approving a photo attaches it to the person (it only shows publicly if the record is verified).",
+    contribPublishConfirm:
+      "This person is already VERIFIED, so approving this photo publishes it immediately (no extra step). Confirm the photo is correct and may be shown publicly?",
     maintBanner: "Site under maintenance: we're re-verifying the data. Some records may not appear. Check back soon.",
     maintTitle: "Maintenance mode",
     maintHint: "Shows a notice to all visitors (data is being re-verified and may be incomplete).",

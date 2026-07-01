@@ -73,7 +73,57 @@ const VOL_PROFILES: { value: string; es: string; en: string }[] = [
   { value: "otro", es: "Otro", en: "Other" },
 ];
 
-type AdminTab = "centros" | "personas" | "voluntarios" | "listas" | "donaciones" | "rescatados";
+type AdminTab = "novedades" | "centros" | "personas" | "voluntarios" | "listas" | "donaciones" | "rescatados";
+
+// One row of the activity/audit feed (db/audit_log.sql).
+type AuditEntry = {
+  id: string;
+  created_at: string;
+  actor_email: string | null;
+  actor_role: string | null;
+  action: string;
+  entity_type: string;
+  entity_id: string | null;
+  summary: string | null;
+};
+
+// Human labels for each audit action (kept out of the big translations object).
+const AUDIT_LABEL: Record<string, { es: string; en: string }> = {
+  contribution_new: { es: "Nuevo aporte", en: "New contribution" },
+  contribution_approved: { es: "Aporte aprobado", en: "Contribution approved" },
+  contribution_rejected: { es: "Aporte rechazado", en: "Contribution rejected" },
+  patient_create: { es: "Alta de persona", en: "Person added" },
+  patient_update: { es: "Edición de persona", en: "Person edited" },
+  patient_status: { es: "Cambio de estatus", en: "Status changed" },
+  patient_verify: { es: "Persona verificada", en: "Person verified" },
+  patient_delete: { es: "Persona eliminada", en: "Person deleted" },
+  rescatado_create: { es: "Nuevo rescatado", en: "New rescued person" },
+  rescatado_update: { es: "Edición de rescatado", en: "Rescued edited" },
+  rescatado_promote: { es: "Rescatado trasladado", en: "Rescued transferred" },
+  rescatado_delete: { es: "Rescatado eliminado", en: "Rescued deleted" },
+  center_create: { es: "Centro agregado", en: "Center added" },
+  center_update: { es: "Centro editado", en: "Center edited" },
+  center_delete: { es: "Centro eliminado", en: "Center deleted" },
+  volunteer_apply: { es: "Nueva solicitud de voluntariado", en: "New volunteer application" },
+  volunteer_approved: { es: "Voluntario aprobado", en: "Volunteer approved" },
+  volunteer_rejected: { es: "Solicitud rechazada", en: "Application rejected" },
+};
+
+// Compact relative time ("hace 5 min"). App-runtime only (Date is fine here).
+function timeAgo(iso: string, lang: "es" | "en"): string {
+  const s = Math.max(0, Math.floor((Date.now() - new Date(iso).getTime()) / 1000));
+  const m = Math.floor(s / 60), h = Math.floor(m / 60), d = Math.floor(h / 24);
+  if (lang === "es") {
+    if (s < 60) return "hace un momento";
+    if (m < 60) return `hace ${m} min`;
+    if (h < 24) return `hace ${h} h`;
+    return `hace ${d} d`;
+  }
+  if (s < 60) return "just now";
+  if (m < 60) return `${m}m ago`;
+  if (h < 24) return `${h}h ago`;
+  return `${d}d ago`;
+}
 type EditType = null | "center" | "person" | "donation" | "rescatado" | "promote";
 
 const CACHE_KEY = "helpmap:data:v4";
@@ -379,6 +429,8 @@ export default function HelpMap({ accent, mapLabels = true, showReport = true }:
   const [contribs, setContribs] = useState<
     { id: string; patient_id: string; patient_name: string; foto_url: string | null; descripcion: string | null; contacto: string | null }[]
   >([]);
+  // Activity feed ("Novedades") — recent changes from the DB audit_log.
+  const [audit, setAudit] = useState<AuditEntry[]>([]);
 
   // Public intake form + offline queue
   const [rNom, setRNom] = useState("");
@@ -850,8 +902,10 @@ export default function HelpMap({ accent, mapLabels = true, showReport = true }:
     try {
       let foto_url: string | null = null;
       if (photo) {
-        const { uploadIntakePhoto } = await import("./uploadPhoto");
-        foto_url = await uploadIntakePhoto(photo);
+        // Private bucket → returns an object PATH (not a public URL). A pending
+        // contribution photo must never be publicly reachable until approved (§2).
+        const { uploadContributionPhoto } = await import("./uploadPhoto");
+        foto_url = await uploadContributionPhoto(photo);
       }
       const res = await fetch("/api/contributions", {
         method: "POST",
@@ -879,6 +933,20 @@ export default function HelpMap({ accent, mapLabels = true, showReport = true }:
       /* offline / non-fatal */
     }
   }, []);
+  // Staff-only: the activity feed. RLS gates audit_log to is_staff(); tolerates the
+  // table not existing yet (pre-migration) so nothing breaks before db/audit_log.sql.
+  const loadAudit = useCallback(async () => {
+    try {
+      const { data, error } = await getSupabase()
+        .from("audit_log")
+        .select("id, created_at, actor_email, actor_role, action, entity_type, entity_id, summary")
+        .order("created_at", { ascending: false })
+        .limit(120);
+      if (!error && data) setAudit(data as AuditEntry[]);
+    } catch {
+      /* offline / table absent — non-fatal */
+    }
+  }, []);
   // Staff-only: load the FULL rescatados base rows (admin fields included) for the
   // admin tab. RLS gates this to is_staff(); anon never reaches the base table.
   const loadRescAdmin = useCallback(async () => {
@@ -894,6 +962,18 @@ export default function HelpMap({ accent, mapLabels = true, showReport = true }:
     }
   }, []);
   const reviewContribution = async (id: string, action: "approve" | "reject") => {
+    // Corroboration gate: an aporte must be checked before it goes public. If the
+    // target record is ALREADY verified, approving a photo publishes it INSTANTLY
+    // (the §8 "double lock" only holds while the record is unverified), so we force
+    // a deliberate confirm that the photo is real and not junk. Photos always need
+    // this human check; text-only aportes don't publish a face, so they pass through.
+    if (action === "approve") {
+      const c = contribs.find((x) => x.id === id);
+      const pat = c ? patients.find((p) => p.id === c.patient_id) : undefined;
+      if (c?.foto_url && pat?.verified) {
+        if (typeof window !== "undefined" && !window.confirm(t.contribPublishConfirm)) return;
+      }
+    }
     try {
       const res = await fetch("/api/contributions", {
         method: "PATCH",
@@ -1723,6 +1803,15 @@ export default function HelpMap({ accent, mapLabels = true, showReport = true }:
       /* offline / non-fatal */
     }
   }, []);
+  // Preload the "needs attention" counts as soon as a staff session resolves, so the
+  // gear badge is accurate before the panel is even opened. Admin also gets the pending
+  // volunteer applications; volunteers only see the aportes count.
+  useEffect(() => {
+    if (!(isAdmin || isVolunteer)) return;
+    loadContributions();
+    loadAudit();
+    if (isAdmin) loadVolRequests();
+  }, [isAdmin, isVolunteer, loadContributions, loadAudit, loadVolRequests]);
   const reviewVolRequest = async (id: string, action: "approve" | "reject") => {
     try {
       const res = await fetch("/api/admin/volunteers", {
@@ -1945,12 +2034,15 @@ export default function HelpMap({ accent, mapLabels = true, showReport = true }:
                 appears once a Supabase session with a staff role exists. */}
             {(isAdmin || isVolunteer) && (
               <button
-                className="gear"
+                className="gear gear-badged"
                 onClick={() => {
                   setView("admin");
-                  switchTab("centros"); // staff (admin + volunteer) can now manage centers
+                  switchTab("novedades"); // land on the activity feed
                   loadContributions(); // pending aportes drive the count badges + in-card review
+                  loadAudit();
+                  if (isAdmin) loadVolRequests();
                 }}
+                aria-label={t.tabNews}
               >
                 <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round">
                   <path d="M4 6h16M4 12h16M4 18h16" />
@@ -1958,6 +2050,9 @@ export default function HelpMap({ accent, mapLabels = true, showReport = true }:
                   <circle cx="15" cy="12" r="2.2" fill="#fff" />
                   <circle cx="8" cy="18" r="2.2" fill="#fff" />
                 </svg>
+                {contribs.length + volReqs.length > 0 && (
+                  <span className="gear-badge">{contribs.length + volReqs.length}</span>
+                )}
               </button>
             )}
             <button className="gear" onClick={() => openContact("volunteer")} aria-label={t.contact}>
@@ -3020,6 +3115,20 @@ export default function HelpMap({ accent, mapLabels = true, showReport = true }:
               {!editType && (
                 <div className="admtabs">
                   <button
+                    className={"atab " + (adminTab === "novedades" ? "atab-on" : "")}
+                    onClick={() => {
+                      switchTab("novedades");
+                      loadAudit();
+                      loadContributions();
+                      if (isAdmin) loadVolRequests();
+                    }}
+                  >
+                    {t.tabNews}
+                    {contribs.length + volReqs.length > 0 && (
+                      <span className="atab-badge">{contribs.length + volReqs.length}</span>
+                    )}
+                  </button>
+                  <button
                     className={"atab " + (adminTab === "centros" ? "atab-on" : "")}
                     onClick={() => switchTab("centros")}
                   >
@@ -3100,6 +3209,53 @@ export default function HelpMap({ accent, mapLabels = true, showReport = true }:
                   </svg>
                   {isAdmin ? t.adminLocalNote : t.volReviewNote}
                 </div>
+
+                {adminTab === "novedades" && !editType && (
+                  <div className="feed">
+                    {(contribs.length > 0 || (isAdmin && volReqs.length > 0)) && (
+                      <div className="feed-pending">
+                        {contribs.length > 0 && (
+                          <button className="feed-pill" onClick={() => switchTab("personas")}>
+                            {t.newsPendingContribs.replace("{n}", String(contribs.length))}
+                          </button>
+                        )}
+                        {isAdmin && volReqs.length > 0 && (
+                          <button
+                            className="feed-pill"
+                            onClick={() => {
+                              switchTab("voluntarios");
+                              loadVolRequests();
+                            }}
+                          >
+                            {t.newsPendingVols.replace("{n}", String(volReqs.length))}
+                          </button>
+                        )}
+                      </div>
+                    )}
+                    <button className="addbtn" onClick={loadAudit}>
+                      {t.newsRefresh}
+                    </button>
+                    {audit.length === 0 ? (
+                      <div className="empty">{t.newsEmpty}</div>
+                    ) : (
+                      <ul className="feed-list">
+                        {audit.map((a) => (
+                          <li key={a.id} className={"feed-item feed-" + a.entity_type}>
+                            <div className="feed-main">
+                              <span className="feed-action">{AUDIT_LABEL[a.action]?.[lang] ?? a.action}</span>
+                              {a.summary && <span className="feed-sum">{a.summary}</span>}
+                            </div>
+                            <div className="feed-meta">
+                              <span>{a.actor_email ?? (a.action === "contribution_new" ? t.newsPublic : t.newsSystem)}</span>
+                              <span className="feed-dot">·</span>
+                              <span>{timeAgo(a.created_at, lang)}</span>
+                            </div>
+                          </li>
+                        ))}
+                      </ul>
+                    )}
+                  </div>
+                )}
 
                 {adminTab === "centros" && !editType && (
                   <div>
