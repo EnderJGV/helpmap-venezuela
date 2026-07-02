@@ -40,11 +40,32 @@ export function rateLimit(key: string, limit = 60, windowMs = 60_000): RateLimit
   };
 }
 
-// Best-effort client IP from common proxy headers (Dokploy/Nginx/Vercel set these).
+// Resolve the real client IP from proxy headers, resistant to client spoofing.
+//
+// Order matters for SECURITY. The leftmost X-Forwarded-For entry is CLIENT-SUPPLIED on
+// proxies that APPEND (e.g. Traefik/Dokploy) → spoofable, so we never trust it blindly.
+//   1. Cloudflare: only when explicitly behind CF (TRUST_CF_IP=true) — else cf-connecting-ip
+//      is itself spoofable. CF sets it to the true client and strips client copies.
+//   2. x-real-ip: set by the platform (Vercel / Traefik / Nginx) to the true client and NOT
+//      forwarded from the client → the safe default for our Vercel deploy.
+//   3. x-forwarded-for: trust N hops from the RIGHT (the proxy appends the real client there).
+//      TRUSTED_PROXY_HOPS defaults to 1 (one trusted proxy in front).
 export function clientIp(request: Request): string {
+  if (process.env.TRUST_CF_IP === "true") {
+    const cf = request.headers.get("cf-connecting-ip");
+    if (cf) return cf.trim();
+  }
+  const real = request.headers.get("x-real-ip");
+  if (real) return real.trim();
   const xff = request.headers.get("x-forwarded-for");
-  if (xff) return xff.split(",")[0].trim();
-  return request.headers.get("x-real-ip") || "unknown";
+  if (xff) {
+    const parts = xff.split(",").map((s) => s.trim()).filter(Boolean);
+    if (parts.length) {
+      const hops = Math.max(1, Number(process.env.TRUSTED_PROXY_HOPS) || 1);
+      return parts[Math.max(0, parts.length - hops)];
+    }
+  }
+  return "unknown";
 }
 
 // Standard rate-limit headers for a response.

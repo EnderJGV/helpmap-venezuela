@@ -88,6 +88,7 @@ export async function sendContactEmail(opts: {
   replyTo?: string;
   message: string;
   images?: string[];
+  suspicious?: boolean; // heuristic flag → subject prefix so the team can filter it
 }): Promise<boolean> {
   const tx = getTransport();
   if (!tx) return false;
@@ -111,7 +112,7 @@ export async function sendContactEmail(opts: {
       from: FROM,
       to,
       replyTo,
-      subject: `[${kindLabel}] ${safeName} · HelpMap`,
+      subject: `${opts.suspicious ? "[POSIBLE SPAM] " : ""}[${kindLabel}] ${safeName} · HelpMap`,
       html,
       attachments: (opts.images || []).slice(0, 4).map(toAttachment),
     });

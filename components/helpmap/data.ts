@@ -210,7 +210,7 @@ export interface Strings {
   volCreated: string; volCreatedNoMail: string; volCreateErr: string;
   volRevoke: string; volRevoked: string; volNone: string; volReviewNote: string; staffGuide: string;
   listTitle: string; listHint: string; listPick: string; listSending: string;
-  listSent: string; listError: string; listNote: string;
+  listSent: string; listSentN: string; listSentPartial: string; listError: string; listNote: string;
   tabDonations: string; addDonation: string; editDonation: string; savedDon: string;
   f_donName: string; f_donDesc: string; f_donSocial: string; f_donUrl: string;
   f_donInfo: string; f_donInfoHint: string; donCopy: string; donData: string;
@@ -371,10 +371,12 @@ export const T: Record<Lang, Strings> = {
     staffGuide: "Ver guía del equipo",
     listTitle: "Subir foto de lista",
     listHint:
-      "Fotografía una lista de pacientes (manuscrita o impresa). Se envía al equipo para procesar (OCR) y revisar antes de publicarse.",
-    listPick: "Tomar / elegir foto",
+      "Fotografía una o varias listas de pacientes (manuscritas o impresas). Puedes elegir varias fotos del mismo centro a la vez. Se envían al equipo para procesar (OCR) y revisar antes de publicarse.",
+    listPick: "Tomar / elegir fotos",
     listSending: "Enviando…",
     listSent: "Lista enviada para procesamiento.",
+    listSentN: "{n} listas enviadas para procesamiento.",
+    listSentPartial: "{ok} de {total} enviadas. Reintenta las que fallaron.",
     listError: "No se pudo enviar la lista. Intenta de nuevo.",
     listNote: "Nota (opcional)",
     tabDonations: "Donaciones",
@@ -605,10 +607,12 @@ export const T: Record<Lang, Strings> = {
     staffGuide: "View team guide",
     listTitle: "Upload list photo",
     listHint:
-      "Photograph a patient list (handwritten or printed). It's sent to the team to process (OCR) and review before publishing.",
-    listPick: "Take / choose photo",
+      "Photograph one or more patient lists (handwritten or printed). You can pick several photos from the same center at once. They're sent to the team to process (OCR) and review before publishing.",
+    listPick: "Take / choose photos",
     listSending: "Sending…",
     listSent: "List sent for processing.",
+    listSentN: "{n} lists sent for processing.",
+    listSentPartial: "{ok} of {total} sent. Retry the ones that failed.",
     listError: "Couldn't send the list. Try again.",
     listNote: "Note (optional)",
     tabDonations: "Donations",

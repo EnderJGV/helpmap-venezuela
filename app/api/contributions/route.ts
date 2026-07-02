@@ -2,6 +2,7 @@ import { NextResponse } from "next/server";
 import { cookies } from "next/headers";
 import { createClient } from "@/utils/supabase/server";
 import { clientIp, rateLimit, rateLimitHeaders } from "@/lib/rateLimit";
+import { cleanText } from "@/lib/sanitize";
 
 // Per-IP flood guard on the PUBLIC submit (POST). A contribution can upload a photo +
 // insert a queue row, so cap it so a script can't flood the moderation queue / storage.
@@ -55,11 +56,24 @@ export async function POST(request: Request) {
   } catch {
     return NextResponse.json({ error: "bad_json" }, { status: 400 });
   }
-  if (!b.patient_id) return NextResponse.json({ error: "missing_patient" }, { status: 422 });
+  if (!b.patient_id || typeof b.patient_id !== "string") return NextResponse.json({ error: "missing_patient" }, { status: 422 });
+  // patient_id must be a UUID — reject anything else before it hits the DB/filters.
+  if (!/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(b.patient_id))
+    return NextResponse.json({ error: "bad_patient" }, { status: 422 });
 
-  const foto = b.foto_url?.trim() || null;
-  const desc = b.descripcion?.trim() || null;
-  const contacto = b.contacto?.trim() || null;
+  let foto = b.foto_url?.trim() || null;
+  // SECURITY: the legit "colaborar" flow uploads to the PRIVATE contrib bucket and
+  // submits an OBJECT PATH (no scheme). Reject any client-supplied URL/scheme so an
+  // attacker can't get an arbitrary external image attached to a patient on approval
+  // (the approve path trusts an http(s) foto_url as-is). Only bare paths are allowed.
+  if (foto && /^[a-z][a-z0-9+.-]*:/i.test(foto)) {
+    console.warn(`[contributions] rejected scheme'd foto_url from ${clientIp(request)}`);
+    foto = null;
+  }
+  // Sanitize stored free text (strip angle brackets / markup; cap length). Shown to
+  // staff in the moderation card — defense-in-depth against stored markup (§14).
+  const desc = cleanText(b.descripcion, 2000) || null;
+  const contacto = cleanText(b.contacto, 200) || null;
   // Require at least one of photo/description — an empty contribution is noise.
   if (!foto && !desc) return NextResponse.json({ error: "empty" }, { status: 422 });
 

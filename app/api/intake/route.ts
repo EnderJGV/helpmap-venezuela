@@ -38,14 +38,8 @@ export async function POST(request: Request) {
     return NextResponse.json({ error: "missing_name" }, { status: 422 });
   }
 
-  // DEBUG: assert the photo travels as `foto_url` (matches the DB column) and
-  // that the legacy `foto_path` is gone. Remove once verified end-to-end.
-  console.log("[intake] payload recibido:", {
-    nombres: b.nombres,
-    apellidos: b.apellidos,
-    foto_url: b.foto_url ?? null,
-    foto_path_present: "foto_path" in b, // debe ser false
-  });
+  // Never log the PII payload (names/CI) — §11: submissions are sensitive. Keep only a
+  // non-identifying warning if the client sends the legacy `foto_path` field by mistake.
   if ("foto_path" in b) {
     console.warn("[intake] ⚠️ llegó foto_path — debería ser foto_url. Revisar cliente.");
   }

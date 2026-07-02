@@ -402,9 +402,14 @@ export default function HelpMap({ accent, mapLabels = true, showReport = true }:
   const [vsBusy, setVsBusy] = useState(false);
   const [vsDone, setVsDone] = useState(false);
   const [vsOpen, setVsOpen] = useState(false); // toggles the form open in the panel
+  const [vsHp, setVsHp] = useState(""); // anti-spam honeypot (see /api/volunteers/apply)
+  const vsOpenedAt = useRef(0);
   const [listBusy, setListBusy] = useState(false);
   const [listNote, setListNote] = useState("");
   const [listLoc, setListLoc] = useState("");
+  // In-app result banner after a lists upload (a toast fades / can be missed on 3G).
+  const [listResult, setListResult] = useState<{ kind: "ok" | "partial" | "error"; msg: string } | null>(null);
+  const [listProgress, setListProgress] = useState<{ done: number; total: number } | null>(null);
 
   // Public "write to us" form (in-app email + image attachments)
   const [cName, setCName] = useState("");
@@ -418,7 +423,11 @@ export default function HelpMap({ accent, mapLabels = true, showReport = true }:
   const [pubConfirm, setPubConfirm] = useState<string | null>(null);
   // Why the user is writing: drives the email subject + form copy. The contact form
   // is only reached from the volunteer / donations CTAs (no generic contact entry).
-  const [contactKind, setContactKind] = useState<"volunteer" | "donation">("volunteer");
+  const [contactKind, setContactKind] = useState<"volunteer" | "donation" | "contact">("contact");
+  // Anti-spam (zero-friction): a honeypot field a human never sees/fills, and the
+  // moment the form opened so the server can reject instant (bot) submissions.
+  const [cHp, setCHp] = useState("");
+  const contactOpenedAt = useRef(0);
 
   // Public "Aportar foto / info" on an existing record (→ contributions moderation
   // queue, NOT the intake funnel — intake is for people not yet in the system).
@@ -1928,6 +1937,8 @@ export default function HelpMap({ accent, mapLabels = true, showReport = true }:
           perfil: vsProfile || null,
           fuentes: vsSources.trim() || null,
           telefono: vsPhone.trim() || null,
+          hp: vsHp,
+          elapsed: vsOpenedAt.current ? Date.now() - vsOpenedAt.current : undefined,
         }),
       });
       const j = await res.json().catch(() => ({}));
@@ -1953,39 +1964,63 @@ export default function HelpMap({ accent, mapLabels = true, showReport = true }:
 
   // ---- List photo upload (staff): forward to n8n via /api/lists ----------
   const onPickList = async (e: React.ChangeEvent<HTMLInputElement>) => {
-    const file = e.target.files?.[0];
-    e.target.value = ""; // allow re-picking the same file
-    if (!file) return;
+    // A single center usually arrives as MANY photos (multiple pages / handwritten
+    // lists). Send each selected image as its own patient_list_photo to n8n — same
+    // location_id + note — so each page is OCR'd independently (n8n contract unchanged).
+    const files = Array.from(e.target.files ?? []);
+    e.target.value = ""; // allow re-picking the same files
+    if (files.length === 0) return;
+    const note = listNote.trim() || null;
+    const loc = listLoc || null;
+    setListResult(null);
+    setListProgress({ done: 0, total: files.length });
     setListBusy(true);
+    let ok = 0;
     try {
-      const b64 = await compressImage(file, LIST_OPTS); // higher-res for OCR legibility
-      const res = await fetch("/api/lists", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          image_b64: b64,
-          filename: file.name,
-          note: listNote.trim() || null,
-          location_id: listLoc || null,
-        }),
-      });
-      if (res.ok) {
-        showToast(t.listSent);
+      for (const file of files) {
+        try {
+          const b64 = await compressImage(file, LIST_OPTS); // higher-res for OCR legibility
+          const res = await fetch("/api/lists", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({
+              image_b64: b64,
+              filename: file.name,
+              note,
+              location_id: loc,
+            }),
+          });
+          if (res.ok) ok++;
+        } catch {
+          /* keep going — report a partial result at the end */
+        }
+        setListProgress((p) => (p ? { ...p, done: p.done + 1 } : p));
+      }
+      if (ok === files.length) {
+        const msg = files.length === 1 ? t.listSent : t.listSentN.replace("{n}", String(ok));
+        setListResult({ kind: "ok", msg });
+        showToast(msg);
         setListNote("");
+      } else if (ok > 0) {
+        const msg = t.listSentPartial.replace("{ok}", String(ok)).replace("{total}", String(files.length));
+        setListResult({ kind: "partial", msg });
+        showToast(msg);
       } else {
+        setListResult({ kind: "error", msg: t.listError });
         showToast(t.listError);
       }
-    } catch {
-      showToast(t.listError);
     } finally {
       setListBusy(false);
+      setListProgress(null);
     }
   };
 
   // ---- Volunteer / donation email (in-app, via nodemailer) ---------------
-  const openContact = (kind: "volunteer" | "donation") => {
+  const openContact = (kind: "volunteer" | "donation" | "contact") => {
     setContactKind(kind);
     setCDone(false);
+    setCHp("");
+    contactOpenedAt.current = Date.now();
     setView("contact");
   };
   const onPickContactPhoto = async (e: React.ChangeEvent<HTMLInputElement>) => {
@@ -2009,7 +2044,17 @@ export default function HelpMap({ accent, mapLabels = true, showReport = true }:
       const res = await fetch("/api/contact", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ kind: contactKind, name: cName.trim(), email: cEmail.trim(), message: cMsg.trim(), images: cImgs }),
+        body: JSON.stringify({
+          kind: contactKind,
+          name: cName.trim(),
+          email: cEmail.trim(),
+          message: cMsg.trim(),
+          images: cImgs,
+          // Anti-spam signals (see /api/contact): honeypot must stay empty; elapsed
+          // is how long the form was open — a real person takes seconds to type.
+          hp: cHp,
+          elapsed: contactOpenedAt.current ? Date.now() - contactOpenedAt.current : undefined,
+        }),
       });
       if (res.ok) {
         // Show an in-form confirmation panel (more reassuring than a quick toast):
@@ -2128,7 +2173,7 @@ export default function HelpMap({ accent, mapLabels = true, showReport = true }:
                 )}
               </button>
             )}
-            <button className="gear" onClick={() => openContact("volunteer")} aria-label={t.contact}>
+            <button className="gear" onClick={() => openContact("contact")} aria-label={t.contact}>
               {ICON.mail}
             </button>
             <button className="gear" onClick={() => setView("volunteer")} aria-label={t.volunteer}>
@@ -2774,6 +2819,17 @@ export default function HelpMap({ accent, mapLabels = true, showReport = true }:
             ) : vsOpen ? (
               <div className="form">
                 <p className="donate-sub">{t.volSignupSub}</p>
+                {/* Honeypot: hidden from humans; bots that fill every field get dropped. */}
+                <input
+                  type="text"
+                  name="website"
+                  tabIndex={-1}
+                  autoComplete="off"
+                  aria-hidden="true"
+                  value={vsHp}
+                  onChange={(e) => setVsHp(e.target.value)}
+                  style={{ position: "absolute", left: "-9999px", width: 1, height: 1, opacity: 0 }}
+                />
                 <div className="fld">
                   <span className="flabel">{t.f_volName}</span>
                   <input className="finput" value={vsName} onChange={(e) => setVsName(e.target.value)} placeholder={t.f_volName} />
@@ -2825,7 +2881,7 @@ export default function HelpMap({ accent, mapLabels = true, showReport = true }:
             ) : (
               <>
                 <p className="vol-ask">{t.volunteerAsk}</p>
-                <button className="btnp" onClick={() => setVsOpen(true)} style={{ width: "100%" }}>
+                <button className="btnp" onClick={() => { setVsHp(""); vsOpenedAt.current = Date.now(); setVsOpen(true); }} style={{ width: "100%" }}>
                   {ICON.check}
                   {t.volSignupCta}
                 </button>
@@ -2875,6 +2931,18 @@ export default function HelpMap({ accent, mapLabels = true, showReport = true }:
             ) : (
             <div className="form">
               <p className="donate-sub">{t.contactSub}</p>
+              {/* Honeypot: hidden from humans (off-screen, not tabbable, aria-hidden).
+                  Bots that auto-fill every field will populate it → server drops it. */}
+              <input
+                type="text"
+                name="website"
+                tabIndex={-1}
+                autoComplete="off"
+                aria-hidden="true"
+                value={cHp}
+                onChange={(e) => setCHp(e.target.value)}
+                style={{ position: "absolute", left: "-9999px", width: 1, height: 1, opacity: 0 }}
+              />
               <div className="fld">
                 <span className="flabel">{t.contactName}</span>
                 <input className="finput" value={cName} onChange={(e) => setCName(e.target.value)} placeholder={t.contactName} />
@@ -3527,13 +3595,40 @@ export default function HelpMap({ accent, mapLabels = true, showReport = true }:
                       <input className="finput" value={listNote} onChange={(e) => setListNote(e.target.value)} placeholder={t.listNote} />
                     </div>
                     <label className="upload">
-                      <input type="file" accept="image/*" capture="environment" onChange={onPickList} style={{ display: "none" }} disabled={listBusy} />
+                      <input type="file" accept="image/*" multiple onChange={onPickList} style={{ display: "none" }} disabled={listBusy} />
                       <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
                         <path d="M12 16V4M8 8l4-4 4 4" />
                         <path d="M4 16v3a1 1 0 0 0 1 1h14a1 1 0 0 0 1-1v-3" />
                       </svg>
-                      {listBusy ? t.listSending : t.listPick}
+                      {listBusy
+                        ? listProgress && listProgress.total > 1
+                          ? `${t.listSending} ${listProgress.done}/${listProgress.total}`
+                          : t.listSending
+                        : t.listPick}
                     </label>
+                    {listBusy && (
+                      <div className="list-progress" role="status" aria-live="polite">
+                        <span className="spin" />
+                        {listProgress && listProgress.total > 1
+                          ? `${t.listSending} ${listProgress.done}/${listProgress.total}`
+                          : t.listSending}
+                      </div>
+                    )}
+                    {!listBusy && listResult && (
+                      <div className={"list-result list-result-" + listResult.kind} role="status" aria-live="polite">
+                        {listResult.kind === "ok" ? (
+                          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.4" strokeLinecap="round" strokeLinejoin="round">
+                            <path d="M20 6 9 17l-5-5" />
+                          </svg>
+                        ) : (
+                          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.4" strokeLinecap="round" strokeLinejoin="round">
+                            <path d="M12 8v5M12 16.5v.5" />
+                            <circle cx="12" cy="12" r="9" />
+                          </svg>
+                        )}
+                        <span>{listResult.msg}</span>
+                      </div>
+                    )}
                   </div>
                 )}
 

@@ -318,6 +318,15 @@ body{margin:0;background:#fff}
 .contact-ack-title{margin:0;font-size:19px;font-weight:800;color:var(--ink)}
 .contact-ack-body{margin:0;font-size:14px;line-height:1.6;color:#454a53;max-width:340px}
 .contact-ack .btnp{margin-top:6px;align-self:stretch}
+/* Persistent in-app result banner after a lists upload (toast can be missed on 3G). */
+.list-result{display:flex;align-items:flex-start;gap:9px;margin-top:10px;padding:11px 12px;border-radius:12px;font-size:13.5px;line-height:1.45;font-weight:600;border:1px solid}
+.list-result svg{width:19px;height:19px;flex:0 0 auto;margin-top:1px}
+.list-result-ok{background:rgba(39,174,96,.10);border-color:rgba(39,174,96,.35);color:#1e7e46}
+.list-result-partial{background:rgba(230,162,60,.12);border-color:rgba(230,162,60,.42);color:#9a6a12}
+.list-result-error{background:rgba(224,64,64,.10);border-color:rgba(224,64,64,.38);color:#b32626}
+.list-progress{display:flex;align-items:center;gap:9px;margin-top:10px;padding:10px 12px;border-radius:12px;font-size:13.5px;font-weight:600;color:#454a53;background:var(--bg-soft,#f4f5f7);border:1px solid var(--line)}
+.list-progress .spin{width:16px;height:16px;border-radius:50%;border:2px solid rgba(0,0,0,.15);border-top-color:#1e7e46;animation:list-spin .7s linear infinite;flex:0 0 auto}
+@keyframes list-spin{to{transform:rotate(360deg)}}
 .donate-list{display:flex;flex-direction:column;gap:11px}
 .donate-card{border:1px solid var(--line);border-radius:14px;background:#fff;overflow:hidden}
 .donate-card.open{box-shadow:0 4px 16px rgba(16,20,28,.07)}

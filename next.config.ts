@@ -13,6 +13,12 @@ const nextConfig: NextConfig = {
         headers: [
           { key: "X-Content-Type-Options", value: "nosniff" },
           { key: "Referrer-Policy", value: "strict-origin-when-cross-origin" },
+          // Clickjacking: nothing here should ever be framed by another site.
+          { key: "X-Frame-Options", value: "DENY" },
+          // Disable device APIs the app never uses (verified: no geolocation/camera/mic).
+          { key: "Permissions-Policy", value: "camera=(), microphone=(), geolocation=(), browsing-topics=()" },
+          // Force HTTPS on the production domain for 1 year (no-op over plain HTTP/dev).
+          { key: "Strict-Transport-Security", value: "max-age=31536000; includeSubDomains" },
         ],
       },
       // NOTE: /sw.js is now served by app/sw.js/route.ts, which sets its own

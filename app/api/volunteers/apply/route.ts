@@ -18,15 +18,21 @@ import { cleanName, cleanText } from "@/lib/sanitize";
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
 
-const RATE_LIMIT = 3; // signups
-const RATE_WINDOW_MS = 60_000; // per minute per IP
+const RATE_LIMIT = 3; // signups per minute per IP
+const RATE_WINDOW_MS = 60_000;
+const HOURLY_LIMIT = 6; // signups per hour per IP — this route creates auth accounts
+const HOURLY_WINDOW_MS = 3_600_000;
+const MIN_DWELL_MS = 3_000; // a human takes seconds to fill the form; faster = a script
 
 const isEmail = (s: string) => /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(s);
 
 export async function POST(request: Request) {
-  const rl = rateLimit(`vol-apply:${clientIp(request)}`, RATE_LIMIT, RATE_WINDOW_MS);
-  if (!rl.ok) {
-    return NextResponse.json({ error: "rate_limited" }, { status: 429, headers: { "Retry-After": String(rl.retryAfter) } });
+  const ip = clientIp(request);
+  const rl = rateLimit(`vol-apply:${ip}`, RATE_LIMIT, RATE_WINDOW_MS);
+  const rlHr = rateLimit(`vol-apply-hr:${ip}`, HOURLY_LIMIT, HOURLY_WINDOW_MS);
+  if (!rl.ok || !rlHr.ok) {
+    const worst = !rl.ok ? rl : rlHr;
+    return NextResponse.json({ error: "rate_limited" }, { status: 429, headers: { "Retry-After": String(worst.retryAfter) } });
   }
 
   let body: Record<string, unknown>;
@@ -34,6 +40,18 @@ export async function POST(request: Request) {
     body = (await request.json()) as Record<string, unknown>;
   } catch {
     return NextResponse.json({ error: "bad_json" }, { status: 400 });
+  }
+
+  // Anti-bot: honeypot must be empty; the form must have been open a moment. Either
+  // trip → pretend success (200) so the bot doesn't adapt, but create NOTHING. This
+  // matters most here: without it a script can mint zero-access auth users at 3/min.
+  if (typeof body.hp === "string" && body.hp.trim() !== "") {
+    console.warn(`[volunteers/apply] honeypot triggered (ip=${ip}) — dropped`);
+    return NextResponse.json({ ok: true });
+  }
+  if (typeof body.elapsed === "number" && body.elapsed >= 0 && body.elapsed < MIN_DWELL_MS) {
+    console.warn(`[volunteers/apply] too-fast submit (${body.elapsed}ms, ip=${ip}) — dropped`);
+    return NextResponse.json({ ok: true });
   }
 
   const str = (v: unknown, max: number) => (typeof v === "string" ? v.trim().slice(0, max) : "");
