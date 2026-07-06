@@ -20,6 +20,11 @@ export async function generateMetadata({ params }: Params): Promise<Metadata> {
   return {
     title,
     description,
+    // PRIVACY (CLAUDE.md §2): a ficha is shareable one-to-one (OG cards below),
+    // but must NOT be indexed — a googleable list of identified disaster victims
+    // by name is a targeting vector. Social preview bots ignore this, so pasting
+    // the link in WhatsApp/Telegram still renders the card.
+    robots: { index: false, follow: false },
     alternates: {
       canonical: `/p/${id}`,
     },

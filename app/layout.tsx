@@ -2,6 +2,7 @@ import type { Metadata, Viewport } from "next";
 import { Geist, Geist_Mono } from "next/font/google";
 import "./globals.css";
 import ServiceWorkerRegister from "@/components/ServiceWorkerRegister";
+import StructuredData from "@/components/StructuredData";
 import Script from "next/script";
 
 const geistSans = Geist({
@@ -22,8 +23,17 @@ const DESCRIPTION =
 export const metadata: Metadata = {
   metadataBase: new URL("https://www.helpmapvzla.net"),
   applicationName: "HelpMap Venezuela",
-  title: "HelpMap Venezuela",
+  title: {
+    default: "HelpMap Venezuela — Buscar familiares tras el terremoto",
+    template: "%s",
+  },
   description: DESCRIPTION,
+  alternates: { canonical: "/" },
+  robots: {
+    index: true,
+    follow: true,
+    googleBot: { index: true, follow: true, "max-image-preview": "large", "max-snippet": -1 },
+  },
   keywords: [
     "helpmap",
     "helpmap venezuela",
@@ -72,6 +82,7 @@ export default function RootLayout({
       className={`${geistSans.variable} ${geistMono.variable} h-full antialiased`}
     >
       <head>
+        <StructuredData />
         {/* Google Tag (gtag.js). PRIVACY (CLAUDE.md §11): searches are sensitive and a
             patient UUID must never reach analytics. We disable GA's automatic page_view
             and send one manually with the /p/<uuid> path REDACTED to /p/[id] — so GA only
