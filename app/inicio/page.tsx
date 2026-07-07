@@ -27,7 +27,7 @@ export default function InicioPage() {
             ¿Cómo podemos <span style={S.accent}>ayudarte</span>?
           </h1>
           <p style={S.sub}>
-            Tras el terremoto en Caracas, La Guaira, Miranda y Yaracuy. Elige una opción para continuar.
+            HelpMapVzla reúne información verificada para facilitar la localización de personas trasladadas a hospitales o refugios tras una emergencia. Elige una opción para continuar.
           </p>
         </header>
 
