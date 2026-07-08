@@ -45,6 +45,10 @@ async function runSync() {
 
   const locUpserts: MappedLocation[] = [];
   const refUpserts: MappedRefugio[] = [];
+  // Centers whose location row actually changed (insert or fresh update) — mirrored to
+  // n8n after the DB write so the intake LISTS dropdown + dedup alias/loc maps stay in
+  // sync with AcopioVE (CLAUDE.md §13 feedback loop, same contract as /api/centers).
+  const notify: Array<{ center: MappedLocation; action: "created" | "updated" }> = [];
   let inserted = 0,
     updated = 0,
     skipped = 0;
@@ -65,6 +69,7 @@ async function runSync() {
       const m = mapCentro(it, ex.location_id);
       locUpserts.push(m.location);
       refUpserts.push(m.refugio);
+      notify.push({ center: m.location, action: "updated" });
       updated++;
     } else {
       const base = mapCentro(it).location.location_id;
@@ -75,6 +80,7 @@ async function runSync() {
       const m = mapCentro(it, id);
       locUpserts.push(m.location);
       refUpserts.push(m.refugio);
+      notify.push({ center: m.location, action: "created" });
       inserted++;
     }
   }
@@ -89,7 +95,47 @@ async function runSync() {
     if (e2) throw new Error("refugios_upsert: " + e2.message);
   }
 
-  return { fetched: items.length, inserted, updated, skipped };
+  const notified = await notifyCenters(notify);
+
+  return { fetched: items.length, inserted, updated, skipped, notified };
+}
+
+// Mirror the changed centers to the n8n centers webhook (LISTS dropdown + dedup alias/loc
+// maps). Best-effort: a webhook failure NEVER fails the sync — the Supabase write already
+// landed. Sent in small serial batches so a big first sync doesn't burst the workflow.
+// Awaited (not fire-and-forget) so the requests complete before the serverless fn returns.
+async function notifyCenters(
+  notify: Array<{ center: MappedLocation; action: "created" | "updated" }>,
+): Promise<number> {
+  const webhook = process.env.N8N_CENTERS_WEBHOOK_URL;
+  if (!webhook || !notify.length) return 0;
+
+  const now = new Date().toISOString();
+  const BATCH = 5;
+  let ok = 0;
+  for (let i = 0; i < notify.length; i += BATCH) {
+    const slice = notify.slice(i, i + BATCH);
+    const results = await Promise.allSettled(
+      slice.map(({ center, action }) =>
+        fetch(webhook, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            type: "center_upsert",
+            action, // created | updated (sync never deletes)
+            center,
+            updated_by: "acopiove_sync",
+            received_at: now,
+            source: "acopiove_sync",
+          }),
+        }).then((r) => {
+          if (!r.ok) throw new Error(String(r.status));
+        }),
+      ),
+    );
+    ok += results.filter((r) => r.status === "fulfilled").length;
+  }
+  return ok;
 }
 
 async function handle(req: Request) {
