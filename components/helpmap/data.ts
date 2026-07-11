@@ -217,6 +217,7 @@ export interface Strings {
   directions: string;
   damageLayer: string; damageLess: string; damageMore: string;
   feltIntensity: string; intLeve: string; intSevera: string; aftershocks: string; damagePreliminary: string;
+  locateMe: string; locateDenied: string; locateUnsupported: string; locateFailed: string;
   volunteer: string; volunteerTitle: string; volunteerSub: string; volunteerAsk: string;
   volunteerWa: string; volunteerEmail: string; volunteerWaMsg: string; volunteerEmailSubj: string;
   volunteerNote: string;
@@ -371,6 +372,10 @@ export const T: Record<Lang, Strings> = {
     intSevera: "Severa",
     aftershocks: "réplicas",
     damagePreliminary: "Datos preliminares",
+    locateMe: "Mi ubicación",
+    locateDenied: "Activa el permiso de ubicación en tu navegador para verte en el mapa.",
+    locateUnsupported: "Tu navegador no admite geolocalización.",
+    locateFailed: "No se pudo obtener tu ubicación. Intenta de nuevo.",
     volunteer: "Ayudar",
     volunteerTitle: "Súmate para ayudar",
     volunteerSub:
@@ -687,6 +692,10 @@ export const T: Record<Lang, Strings> = {
     intSevera: "Severe",
     aftershocks: "aftershocks",
     damagePreliminary: "Preliminary data",
+    locateMe: "My location",
+    locateDenied: "Turn on location permission in your browser to see yourself on the map.",
+    locateUnsupported: "Your browser doesn't support geolocation.",
+    locateFailed: "Couldn't get your location. Try again.",
     volunteer: "Help",
     volunteerTitle: "Join in and help",
     volunteerSub:

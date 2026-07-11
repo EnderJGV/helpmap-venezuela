@@ -118,6 +118,11 @@ export default function HelpMap({ accent, mapLabels = true, showReport = true }:
   const [mapReady, setMapReady] = useState(false);
   const [showHeat, setShowHeat] = useState(false); // damage heat overlay off by default (user toggles "Daños")
   const [damage, setDamage] = useState<DamageData>(SEED_DAMAGE); // USGS-fed, seed fallback
+  // "Mi ubicación": the visitor's own GPS position, shown as a blue dot so they can
+  // orient themselves on the map. Requested explicitly (button tap), never on load —
+  // asking for location permission unprompted is unexpected and often auto-denied.
+  const [myLoc, setMyLoc] = useState<{ lat: number; lng: number; accuracy: number } | null>(null);
+  const [locating, setLocating] = useState(false);
 
   // Auth
   const [user, setUser] = useState<AuthUser | null>(null);
@@ -187,6 +192,10 @@ export default function HelpMap({ accent, mapLabels = true, showReport = true }:
   const heatRef = useRef<any>(null);
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   const quakeLayerRef = useRef<any>(null); // aftershock markers (USGS)
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  const myLocMarkerRef = useRef<any>(null);
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  const myLocCircleRef = useRef<any>(null);
   const toastTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
   const supabaseRef = useRef<ReturnType<typeof createClient> | null>(null);
   const getSupabase = () => {
@@ -294,6 +303,31 @@ export default function HelpMap({ accent, mapLabels = true, showReport = true }:
     if (toastTimer.current) clearTimeout(toastTimer.current);
     toastTimer.current = setTimeout(() => setToast(""), 1900);
   }, []);
+
+  // "Mi ubicación" button: one-shot GPS read, recenters the map and drops a blue "you
+  // are here" dot (see the marker effect below). Never runs automatically.
+  const locateMe = useCallback(() => {
+    if (typeof navigator === "undefined" || !navigator.geolocation) {
+      showToast(t.locateUnsupported);
+      return;
+    }
+    setLocating(true);
+    navigator.geolocation.getCurrentPosition(
+      (pos) => {
+        const { latitude, longitude, accuracy } = pos.coords;
+        setMyLoc({ lat: latitude, lng: longitude, accuracy });
+        setLocating(false);
+        if (mapRef.current) {
+          mapRef.current.setView([latitude, longitude], Math.max(mapRef.current.getZoom(), 14), { animate: false });
+        }
+      },
+      (err) => {
+        setLocating(false);
+        showToast(err.code === err.PERMISSION_DENIED ? t.locateDenied : t.locateFailed);
+      },
+      { enableHighAccuracy: true, timeout: 12000, maximumAge: 60000 },
+    );
+  }, [showToast, t]);
 
   // ---- Auth session ------------------------------------------------------
   useEffect(() => {
@@ -690,6 +724,37 @@ export default function HelpMap({ accent, mapLabels = true, showReport = true }:
       m.setZIndexOffset(active ? 1000 : dim ? -100 : 0);
     });
   }, [mapReady, mapLocations, patients, tsMatch, locationSel, focusId, refugioById]);
+
+  // "Mi ubicación" marker: a blue dot (+ pulse) at the visitor's own GPS position, plus a
+  // translucent circle for the accuracy radius — the same "you are here" convention as
+  // Google/Apple Maps. Not a location pin (not clickable, no sheet), purely orientation.
+  useEffect(() => {
+    if (!mapReady || !mapRef.current || !window.L || !myLoc) return;
+    const L = window.L;
+    const map = mapRef.current;
+    const pos: [number, number] = [myLoc.lat, myLoc.lng];
+    if (!myLocMarkerRef.current) {
+      const icon = L.divIcon({
+        className: "mkwrap",
+        html: '<div class="meloc"><span class="meloc-pulse"></span><span class="meloc-dot"></span></div>',
+        iconSize: [18, 18],
+        iconAnchor: [9, 9],
+      });
+      myLocMarkerRef.current = L.marker(pos, { icon, zIndexOffset: 2000, interactive: false, keyboard: false }).addTo(map);
+      myLocCircleRef.current = L.circle(pos, {
+        radius: myLoc.accuracy,
+        color: "#1a73e8",
+        weight: 1,
+        fillColor: "#1a73e8",
+        fillOpacity: 0.12,
+        interactive: false,
+      }).addTo(map);
+    } else {
+      myLocMarkerRef.current.setLatLng(pos);
+      myLocCircleRef.current.setLatLng(pos);
+      myLocCircleRef.current.setRadius(myLoc.accuracy);
+    }
+  }, [mapReady, myLoc]);
 
   // ---- Damage data: live from USGS FDSN, seed fallback (see usgsQuake.ts) ----
   useEffect(() => {
@@ -2175,6 +2240,19 @@ export default function HelpMap({ accent, mapLabels = true, showReport = true }:
             <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round">
               <path d="M5 12h14" />
             </svg>
+          </button>
+        </div>
+      )}
+
+      {!view && (
+        <div className="locatectl">
+          <button
+            className={"locatebtn" + (locating ? " locatebtn-busy" : "")}
+            onClick={locateMe}
+            aria-label={t.locateMe}
+            title={t.locateMe}
+          >
+            {ICON.locate}
           </button>
         </div>
       )}

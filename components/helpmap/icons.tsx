@@ -157,6 +157,13 @@ export const ICON = {
       <path d="M4.5 21h15" />
     </svg>
   ),
+  // GPS crosshair — "center the map on my location" button.
+  locate: (
+    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+      <circle cx="12" cy="12" r="3" />
+      <path d="M12 2v3M12 19v3M2 12h3M19 12h3" />
+    </svg>
+  ),
 };
 
 // Maps each LocationType to its icon in `ICON`, so any list/legend/filter that shows a
